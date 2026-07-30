@@ -273,21 +273,21 @@ See `docs/harness.html` for the full customization guide.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `max_positions` | 5 | Maximum concurrent positions |
-| `max_position_value` | 5000 | Maximum $ per position |
+| `max_positions` | 20 | Maximum concurrent positions |
+| `max_position_value` | 15000 | Maximum $ per position |
 | `take_profit_pct` | 10 | Take profit percentage |
 | `stop_loss_pct` | 5 | Stop loss percentage |
-| `risk_per_trade_pct` | 0.75 | Max account risk per trade, used with stop distance / ATR sizing |
+| `risk_per_trade_pct` | 1.25 | Max account risk per trade, used with stop distance / ATR sizing |
 | `min_signal_quality_score` | 0.35 | Minimum signal quality before research and entry scoring |
-| `min_sentiment_score` | 0.3 | Minimum sentiment to consider |
-| `min_analyst_confidence` | 0.6 | Minimum LLM confidence to trade |
+| `min_sentiment_score` | 0.32 | Minimum sentiment to consider |
+| `min_analyst_confidence` | 0.55 | Minimum LLM confidence to trade |
 | `entry_require_technical_data` | false | Require RSI/SMA/BB data before allowing timed entries |
 | `dynamic_tp_fallback_pct` | 12 | Dynamic take-profit target when ATR is unavailable |
-| `unknown_sector_max_positions` | 2 | Separate concentration cap for positions with unknown sector |
+| `unknown_sector_max_positions` | 4 | Separate concentration cap for positions with unknown sector |
 | `options_enabled` | false | Enable options trading |
 | `crypto_enabled` | false | Enable 24/7 crypto trading |
 | `crypto_symbols` | BTC/ETH/SOL | Configured crypto symbols eligible for crypto trading |
-| `crypto_max_position_value` | 1000 | Maximum $ per crypto position |
+| `crypto_max_position_value` | 15000 | Maximum $ per crypto position |
 | `twitter_cookie_accounts` | [] | Multiple Twitter/X cookie accounts for rotated confirmation searches |
 | `reddit_cookie_accounts` | [] | Multiple Reddit cookie accounts for rotated Reddit gatherer access |
 | `alpha_vantage_api_key` | "" | Alpha Vantage news sentiment API key; can also be set as a Worker secret |

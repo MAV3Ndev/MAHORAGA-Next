@@ -817,7 +817,7 @@ export function SettingsModal({
                     />
                   </div>
                   <div>
-                    <label className="hud-label block mb-1">Position Size (% of Cash)</label>
+                    <label className="hud-label block mb-1">Position Size (% of Buying Power)</label>
                     <input
                       type="number"
                       className="hud-input w-full"
