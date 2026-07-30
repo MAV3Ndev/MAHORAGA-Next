@@ -6,12 +6,12 @@
  * because it trades 24/7 outside of market hours.
  */
 
+import { normalizeResearchAnalysis } from "../../../core/research-validation";
 import type { Position, PositionEntry, ResearchResult, Signal, SocialSnapshotCacheEntry } from "../../../core/types";
 import { parseLlmJsonObject } from "../../../lib/llm-json";
 import { createAlpacaProviders } from "../../../providers/alpaca";
 import type { StrategyContext } from "../../types";
 import { getCryptoSymbolAliases, isCryptoSymbol, normalizeCryptoSymbol } from "../helpers/crypto";
-import { buildCryptoFallbackResearch } from "../helpers/research-fallback";
 import { computeRiskSizedNotional } from "./risk-sizing";
 
 const MAX_RETRIES = 3;
@@ -167,16 +167,27 @@ JSON response:
         content_length: content.length,
       });
       let analysis: {
-        verdict: "BUY" | "SKIP" | "WAIT";
-        confidence: number;
-        entry_quality: "excellent" | "good" | "fair" | "poor";
-        reasoning: string;
-        red_flags?: string[];
-        catalysts?: string[];
+        verdict: unknown;
+        confidence: unknown;
+        entry_quality: unknown;
+        reasoning: unknown;
+        red_flags?: unknown;
+        catalysts?: unknown;
       };
 
       try {
         analysis = parseResearchAnalysis(content);
+        const result = normalizeResearchAnalysis(symbol, analysis);
+
+        ctx.log("Crypto", "researched", {
+          symbol,
+          verdict: result.verdict,
+          confidence: result.confidence,
+          quality: result.entry_quality,
+          attempt,
+        });
+
+        return result;
       } catch (parseError) {
         ctx.log("Crypto", "research_parse_error", {
           symbol,
@@ -190,52 +201,8 @@ JSON response:
           continue;
         }
 
-        return buildCryptoFallbackResearch(
-          ctx,
-          symbol,
-          momentum,
-          sentiment,
-          `LLM returned malformed JSON after ${MAX_RETRIES} attempts`
-        );
+        return null;
       }
-
-      // Validate verdict (case-insensitive)
-      const receivedVerdict = analysis.verdict;
-      const normalizedVerdict = receivedVerdict ? String(receivedVerdict).toUpperCase().trim() : null;
-      if (!normalizedVerdict || !["BUY", "SKIP", "WAIT"].includes(normalizedVerdict)) {
-        ctx.log("Crypto", "research_invalid_verdict", {
-          symbol,
-          received_verdict: receivedVerdict,
-          received_type: typeof receivedVerdict,
-          received_confidence: analysis.confidence,
-          received_fields: Object.keys(analysis),
-        });
-        analysis.verdict = "SKIP";
-        analysis.confidence = 0.1;
-      } else {
-        analysis.verdict = normalizedVerdict as "BUY" | "SKIP" | "WAIT";
-      }
-
-      const result: ResearchResult = {
-        symbol,
-        verdict: analysis.verdict,
-        confidence: Math.max(0, Math.min(1, analysis.confidence || 0)),
-        entry_quality: analysis.entry_quality || "fair",
-        reasoning: analysis.reasoning || "No reasoning provided",
-        red_flags: analysis.red_flags || [],
-        catalysts: analysis.catalysts || [],
-        timestamp: Date.now(),
-      };
-
-      ctx.log("Crypto", "researched", {
-        symbol,
-        verdict: result.verdict,
-        confidence: result.confidence,
-        quality: result.entry_quality,
-        attempt,
-      });
-
-      return result;
     } catch (error) {
       lastError = String(error);
       const isRateLimit = lastError.includes("429") || lastError.includes("rate_limit");
@@ -366,7 +333,7 @@ export async function runCryptoTrading(ctx: StrategyContext, positions: Position
 
     const account = await ctx.broker.getAccount();
     const sizing = computeRiskSizedNotional({
-      cash: account.cash,
+      buyingPower: account.buying_power,
       maxPositionValue: ctx.config.crypto_max_position_value,
       confidence: research.confidence,
       positionSizePctOfCash: ctx.config.position_size_pct_of_cash,
@@ -386,7 +353,7 @@ export async function runCryptoTrading(ctx: StrategyContext, positions: Position
       ? `Crypto momentum (promoted WAIT): ${research.reasoning}`
       : `Crypto momentum: ${research.reasoning}`;
     const result = await ctx.broker.buy(signal.symbol, positionSize, tradeReason);
-    if (result) {
+    if (result.submitted) {
       rememberPendingCryptoBuy(ctx, signal.symbol, Date.now());
       trackCryptoPositionEntry(ctx, signal, research, tradeReason);
       for (const alias of getCryptoSymbolAliases(signal.symbol)) {
@@ -395,6 +362,11 @@ export async function runCryptoTrading(ctx: StrategyContext, positions: Position
       cryptoPositions.push({ symbol: normalizeCryptoSymbol(signal.symbol) } as Position);
       break;
     }
+    ctx.log("Crypto", "buy_blocked", {
+      symbol: signal.symbol,
+      reason: result.reason,
+      ...(result.metadata ?? {}),
+    });
   }
 }
 

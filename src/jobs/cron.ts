@@ -7,7 +7,7 @@ import { insertRawEvent, rawEventExists } from "../storage/d1/queries/events";
 import { getRiskState, resetDailyLoss } from "../storage/d1/queries/risk-state";
 
 export const CRON_SCHEDULES = {
-  eventIngestion: "*/5 13-20 * * 1-5",
+  eventIngestion: "*/5 13-21 * * 1-5",
   marketOpenPrep: "0 14 * * 1-5",
   marketCloseCleanup: "30 21 * * 1-5",
   midnightReset: "0 5 * * *",

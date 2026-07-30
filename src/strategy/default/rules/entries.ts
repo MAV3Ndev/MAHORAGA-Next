@@ -5,6 +5,7 @@
  * Core ALWAYS enforces stop-loss from config as a safety floor.
  */
 
+import { isCryptoSymbol } from "../../../core/asset-symbols";
 import type { Account, Position, ResearchResult } from "../../../core/types";
 import type { BuyCandidate, StrategyContext } from "../../types";
 import { type CandidateScore, calculateCandidateScores } from "./candidate-score";
@@ -27,7 +28,8 @@ export function selectEntries(
 ): BuyCandidate[] {
   const heldSymbols = new Set(positions.map((p) => p.symbol));
   const candidates: BuyCandidate[] = [];
-  const verdictCounts = research.reduce<Record<string, number>>((acc, item) => {
+  const stockResearch = research.filter((r) => !isCryptoSymbol(r.symbol, ctx.config.crypto_symbols || []));
+  const verdictCounts = stockResearch.reduce<Record<string, number>>((acc, item) => {
     acc[item.verdict] = (acc[item.verdict] || 0) + 1;
     return acc;
   }, {});
@@ -37,8 +39,8 @@ export function selectEntries(
     return [];
   }
 
-  const buyResearch = research.filter((r) => r.verdict === "BUY");
-  const promotableWaits = research.filter((r) => isPromotableWait(r, ctx));
+  const buyResearch = stockResearch.filter((r) => r.verdict === "BUY");
+  const promotableWaits = stockResearch.filter((r) => isPromotableWait(r, ctx));
   const entryResearch = [...buyResearch, ...promotableWaits];
 
   const candidateScoreMap: Record<string, CandidateScore> = {};
@@ -103,7 +105,7 @@ export function selectEntries(
 
   if (buyResearch.length === 0 && (verdictCounts.WAIT ?? 0) > 0) {
     ctx.log("Entries", "no_buy_verdicts", {
-      top_waits: research
+      top_waits: stockResearch
         .filter((item) => item.verdict === "WAIT")
         .slice(0, 3)
         .map((item) => ({
@@ -162,7 +164,7 @@ export function selectEntries(
     const compositeScore = candidateScore?.score ?? r.confidence;
     const techData = getTechnicalData(r.symbol, ctx);
     const sizing = computeRiskSizedNotional({
-      cash: account.cash,
+      buyingPower: account.buying_power,
       maxPositionValue: ctx.config.max_position_value,
       confidence: compositeScore,
       positionSizePctOfCash: ctx.config.position_size_pct_of_cash,
@@ -296,14 +298,21 @@ function getSectorMap(_ctx: StrategyContext): Record<string, string> {
   return _ctx.state.get<Record<string, string>>("sectorMap") ?? {};
 }
 
-function isPromotableWait(result: ResearchResult, _ctx: StrategyContext): boolean {
+function isPromotableWait(result: ResearchResult, ctx: StrategyContext): boolean {
   if (result.verdict !== "WAIT") return false;
-  return false;
+  if (result.entry_quality === "poor") return false;
+  if (result.red_flags.length > 3) return false;
+  if (result.red_flags.length > 1 && result.catalysts.length === 0) return false;
+  return result.confidence >= getPromotableWaitThreshold(ctx);
 }
 
 function getRequiredEntryScore(result: ResearchResult, ctx: StrategyContext): number {
   if (isPromotableWait(result, ctx)) {
-    return Math.max(0.55, ctx.config.min_analyst_confidence - 0.05);
+    return getPromotableWaitThreshold(ctx);
   }
-  return ctx.config.min_analyst_confidence;
+  return Math.max(0.45, ctx.config.min_analyst_confidence - 0.15);
+}
+
+function getPromotableWaitThreshold(ctx: StrategyContext): number {
+  return Math.max(0.45, ctx.config.min_analyst_confidence - 0.1);
 }

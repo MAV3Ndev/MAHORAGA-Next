@@ -44,6 +44,7 @@ export const analyzeSignalsPrompt: AnalyzeSignalsPromptBuilder = (
 ACCOUNT STATUS:
 - Equity: $${account.equity.toFixed(2)}
 - Cash: $${account.cash.toFixed(2)}
+- Buying Power: $${account.buying_power.toFixed(2)}
 - Current Positions: ${positions.length}/${ctx.config.max_positions}
 
 CURRENT POSITIONS:

@@ -167,7 +167,7 @@ Default strategy internals can import default helpers. The harness should not.
 Recent strategy-side safeguards are deliberately implemented as pure rules:
 
 - `candidate-score.ts` ranks research candidates with analyst output, signal quality, sentiment, source diversity, momentum, and red-flag penalties.
-- `risk-sizing.ts` caps notional by both cash allocation and account-risk budget, using ATR or configured stop distance.
+- `risk-sizing.ts` caps notional by both buying-power allocation and account-risk budget, using ATR or configured stop distance.
 - `replay.ts` provides a lightweight order/price-series replay helper for validating strategy behavior outside the Durable Object.
 - `portfolio-risk.ts` treats unknown-sector exposure as a capped bucket instead of skipping concentration checks.
 - `advanced-exits.ts` uses `dynamic_tp_fallback_pct` when ATR is unavailable, avoiding an implicit max-TP fallback.

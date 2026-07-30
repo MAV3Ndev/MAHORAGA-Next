@@ -151,7 +151,7 @@ function createContext() {
         next_open: new Date().toISOString(),
         next_close: new Date().toISOString(),
       }),
-      buy: async () => true,
+      buy: async () => ({ submitted: true }),
       buyOption: async () => true,
       sell: async () => true,
       syncProtectiveStops: async () => {},

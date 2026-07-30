@@ -15,7 +15,10 @@ export interface CompletePromptParams {
   logAgent: string;
   defaultMaxTokens: number;
   temperature: number;
+  validate?: (analysis: unknown) => unknown;
 }
+
+const JSON_COMPLETION_MAX_ATTEMPTS = 3;
 
 export function isUnknownModelError(error: unknown): boolean {
   const message = String(error).toLowerCase();
@@ -40,6 +43,7 @@ export class ResearchService {
     logAgent,
     defaultMaxTokens,
     temperature,
+    validate,
   }: CompletePromptParams): Promise<{ analysis: T; model: string }> {
     const config = this.deps.getConfig();
     const preferredModel = prompt.model || config.llm_analyst_model || config.llm_model;
@@ -54,38 +58,54 @@ export class ResearchService {
       temperature,
       response_format: { type: "json_object" },
     };
-    const { response, model } = await this.completeWithFallback(request, preferredModel, fallbackModel, logAgent);
+    let model = preferredModel;
+    let attemptRequest = request;
 
-    this.trackUsage(model, response);
+    for (let attempt = 0; attempt < JSON_COMPLETION_MAX_ATTEMPTS; attempt++) {
+      const completion =
+        attempt === 0
+          ? await this.completeWithFallback(attemptRequest, preferredModel, fallbackModel, logAgent)
+          : { response: await this.completeOnce(attemptRequest, model), model };
 
-    try {
-      return {
-        analysis: parseLlmJsonObject<T>(response.content || "{}"),
-        model,
-      };
-    } catch (error) {
-      const retryMaxTokens = Math.max(maxTokens * 3, 1200);
-      this.deps.log(logAgent, "json_parse_retry", {
-        model,
-        max_tokens: maxTokens,
-        retry_max_tokens: retryMaxTokens,
-        reason: String(error),
-      });
+      model = completion.model;
+      this.trackUsage(model, completion.response);
 
-      const retryResponse = await this.completeOnce(
-        {
+      try {
+        const parsed = parseLlmJsonObject<unknown>(completion.response.content || "{}");
+        return {
+          analysis: (validate ? validate(parsed) : parsed) as T,
+          model,
+        };
+      } catch (error) {
+        if (attempt >= JSON_COMPLETION_MAX_ATTEMPTS - 1) {
+          throw error;
+        }
+
+        const retryMaxTokens = Math.max(maxTokens * (attempt + 3), 1200);
+        this.deps.log(logAgent, "json_parse_retry", {
+          model,
+          attempt: attempt + 1,
+          max_tokens: attemptRequest.max_tokens,
+          retry_max_tokens: retryMaxTokens,
+          reason: String(error),
+        });
+
+        attemptRequest = {
           ...request,
+          messages: [
+            ...request.messages,
+            {
+              role: "user",
+              content:
+                "Return the same answer again as one complete, valid JSON object only. Include every required field from the requested schema. Do not include markdown or thinking text.",
+            },
+          ],
           max_tokens: retryMaxTokens,
-        },
-        model
-      );
-      this.trackUsage(model, retryResponse);
-
-      return {
-        analysis: parseLlmJsonObject<T>(retryResponse.content || "{}"),
-        model,
-      };
+        };
+      }
     }
+
+    throw new Error("Failed to complete JSON prompt");
   }
 
   private trackUsage(model: string, response: Awaited<ReturnType<LLMProvider["complete"]>>): void {

@@ -1,5 +1,5 @@
 export interface RiskSizingInput {
-  cash: number;
+  buyingPower: number;
   maxPositionValue: number;
   confidence: number;
   positionSizePctOfCash: number;
@@ -12,7 +12,7 @@ export interface RiskSizingInput {
 
 export interface RiskSizingResult {
   notional: number;
-  cashBudgetNotional: number;
+  positionBudgetNotional: number;
   riskBudgetNotional: number;
   stopDistancePct: number;
   riskBudget: number;
@@ -21,15 +21,15 @@ export interface RiskSizingResult {
 export function computeRiskSizedNotional(input: RiskSizingInput): RiskSizingResult {
   const confidence = clamp(input.confidence, 0, 1);
   const regimeMultiplier = clamp(input.regimeMultiplier ?? 1, 0, 1);
-  const cashBudgetNotional = input.cash * (input.positionSizePctOfCash / 100) * confidence;
-  const riskBudget = input.cash * (input.riskPerTradePct / 100);
+  const positionBudgetNotional = input.buyingPower * (input.positionSizePctOfCash / 100) * confidence;
+  const riskBudget = input.buyingPower * (input.riskPerTradePct / 100);
   const stopDistancePct = calculateStopDistancePct(input.stopLossPct, input.entryPrice, input.atr);
   const riskBudgetNotional = stopDistancePct > 0 ? riskBudget / (stopDistancePct / 100) : input.maxPositionValue;
-  const rawNotional = Math.min(cashBudgetNotional, riskBudgetNotional, input.maxPositionValue);
+  const rawNotional = Math.min(positionBudgetNotional, riskBudgetNotional, input.maxPositionValue);
 
   return {
     notional: Math.max(0, rawNotional * regimeMultiplier),
-    cashBudgetNotional,
+    positionBudgetNotional,
     riskBudgetNotional,
     stopDistancePct,
     riskBudget,

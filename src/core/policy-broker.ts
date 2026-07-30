@@ -5,7 +5,7 @@
  * directly, bypassing kill switch, daily loss limits, position concentration, etc.
  * Now all trades (buy AND sell) go through PolicyEngine.evaluate() first.
  *
- * Strategies call ctx.broker.buy()/sell() and get back true/false.
+ * Strategies call ctx.broker.buy()/sell(); buy rejections include structured details.
  * They cannot bypass these safety checks.
  */
 
@@ -347,15 +347,15 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
     await Promise.all(managedOrders.map((order) => alpaca.trading.cancelOrder(order.id).catch(() => undefined)));
   }
 
-  async function buy(symbol: string, notional: number, reason: string): Promise<boolean> {
+  async function buy(symbol: string, notional: number, reason: string) {
     if (!symbol || symbol.trim().length === 0) {
       log("PolicyBroker", "buy_blocked", { reason: "Empty symbol" });
-      return false;
+      return { submitted: false, reason: "empty_symbol" };
     }
 
     if (notional <= 0 || !Number.isFinite(notional)) {
       log("PolicyBroker", "buy_blocked", { symbol, reason: "Invalid notional", notional });
-      return false;
+      return { submitted: false, reason: "invalid_notional", metadata: { notional } };
     }
 
     const isCrypto = isCryptoSymbol(symbol, deps.cryptoSymbols);
@@ -373,7 +373,7 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
         assetInfo = await alpaca.trading.getAsset(symbol);
         if (!assetInfo) {
           log("PolicyBroker", "buy_blocked", { symbol, reason: "Asset not found" });
-          return false;
+          return { submitted: false, reason: "asset_not_found" };
         }
         if (!deps.allowedExchanges.includes(assetInfo.exchange)) {
           log("PolicyBroker", "buy_blocked", {
@@ -381,11 +381,15 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
             reason: "Exchange not allowed",
             exchange: assetInfo.exchange,
           });
-          return false;
+          return {
+            submitted: false,
+            reason: "exchange_not_allowed",
+            metadata: { exchange: assetInfo.exchange },
+          };
         }
       } catch {
         log("PolicyBroker", "buy_blocked", { symbol, reason: "Asset lookup failed" });
-        return false;
+        return { submitted: false, reason: "asset_lookup_failed" };
       }
     }
 
@@ -419,7 +423,7 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
           symbol,
           reason: "Unable to determine current price",
         });
-        return false;
+        return { submitted: false, reason: "price_unavailable" };
       }
     }
 
@@ -452,7 +456,14 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
           cutoff_minutes: deps.equityEntryCutoffMinutesBeforeClose,
           next_close: clock.next_close,
         });
-        return false;
+        return {
+          submitted: false,
+          reason: "near_market_close",
+          metadata: {
+            cutoff_minutes: deps.equityEntryCutoffMinutesBeforeClose,
+            next_close: clock.next_close,
+          },
+        };
       }
 
       const { adjustedNotional, cap } = computeCappedBuyNotional(notional, account, isCrypto);
@@ -467,7 +478,17 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
           effective_cap: Math.round(cap * 100) / 100,
           isCrypto,
         });
-        return false;
+        return {
+          submitted: false,
+          reason: "insufficient_buying_power",
+          metadata: {
+            requested_notional: Math.round(notional * 100) / 100,
+            buying_power: account.buying_power,
+            daytrading_buying_power: account.daytrading_buying_power,
+            effective_cap: Math.round(cap * 100) / 100,
+            is_crypto: isCrypto,
+          },
+        };
       }
 
       if (adjustedNotional < notional) {
@@ -490,7 +511,15 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
           adjusted_notional: adjustedNotional,
           min_notional: 100,
         });
-        return false;
+        return {
+          submitted: false,
+          reason: "below_minimum_notional",
+          metadata: {
+            requested_notional: Math.round(notional * 100) / 100,
+            adjusted_notional: adjustedNotional,
+            min_notional: 100,
+          },
+        };
       }
 
       order.notional = adjustedNotional;
@@ -507,7 +536,20 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
           adjusted_notional: adjustedNotional,
           violations: result.violations.map((v) => v.message),
         });
-        return false;
+        return {
+          submitted: false,
+          reason: "policy_rejected",
+          metadata: {
+            requested_notional: Math.round(notional * 100) / 100,
+            adjusted_notional: adjustedNotional,
+            violations: result.violations.map((violation) => ({
+              rule: violation.rule,
+              message: violation.message,
+              current_value: violation.current_value,
+              limit_value: violation.limit_value,
+            })),
+          },
+        };
       }
 
       if (result.warnings.length > 0) {
@@ -525,7 +567,14 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
           status: existingOpenBuy.status,
           order_type: existingOpenBuy.order_type ?? existingOpenBuy.type,
         });
-        return false;
+        return {
+          submitted: false,
+          reason: "buy_order_already_open",
+          metadata: {
+            order_status: existingOpenBuy.status,
+            order_type: existingOpenBuy.order_type ?? existingOpenBuy.type,
+          },
+        };
       }
 
       // Execute
@@ -601,10 +650,17 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
         status: String(alpacaOrder.status ?? "submitted"),
         orderType: String(alpacaOrder.order_type ?? alpacaOrder.type ?? "market"),
       });
-      return true;
+      return {
+        submitted: true,
+        metadata: {
+          order_status: alpacaOrder.status,
+          order_type: alpacaOrder.order_type ?? alpacaOrder.type,
+          notional: adjustedNotional,
+        },
+      };
     } catch (error) {
       log("PolicyBroker", "buy_failed", { symbol, error: String(error) });
-      return false;
+      return { submitted: false, reason: "broker_error", metadata: { error: String(error) } };
     }
   }
 

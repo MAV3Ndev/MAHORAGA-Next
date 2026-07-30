@@ -114,7 +114,7 @@ export function evaluateAnalystBuyGuard(params: {
 }
 
 export function computeAnalystRecommendationNotional(params: {
-  cash: number;
+  buyingPower: number;
   basePositionSizePct: number;
   confidence: number;
   maxPositionValue: number;
@@ -124,7 +124,7 @@ export function computeAnalystRecommendationNotional(params: {
   mediumConfidenceMultiplier: number;
 }): number {
   const {
-    cash,
+    buyingPower,
     basePositionSizePct,
     confidence,
     maxPositionValue,
@@ -150,6 +150,6 @@ export function computeAnalystRecommendationNotional(params: {
     }
   }
 
-  const rawNotional = cash * (llmSuggestedPct / 100) * confidenceClamped * convictionMultiplier;
+  const rawNotional = buyingPower * (llmSuggestedPct / 100) * confidenceClamped * convictionMultiplier;
   return Math.min(rawNotional, maxPositionValue);
 }

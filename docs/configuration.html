@@ -182,12 +182,12 @@
         </tr>
         <tr>
           <td><code>max_positions</code></td>
-          <td>5</td>
+          <td>20</td>
           <td>Maximum concurrent positions</td>
         </tr>
         <tr>
           <td><code>max_position_value</code></td>
-          <td>5000</td>
+          <td>15000</td>
           <td>Maximum $ per position</td>
         </tr>
         <tr>
@@ -202,12 +202,12 @@
         </tr>
         <tr>
           <td><code>risk_per_trade_pct</code></td>
-          <td>0.75</td>
+          <td>1.25</td>
           <td>Maximum account risk per trade, applied with stop distance and ATR-aware sizing</td>
         </tr>
         <tr>
           <td><code>min_sentiment_score</code></td>
-          <td>0.3</td>
+          <td>0.32</td>
           <td>Minimum sentiment to consider (0-1)</td>
         </tr>
         <tr>
@@ -217,13 +217,13 @@
         </tr>
         <tr>
           <td><code>min_analyst_confidence</code></td>
-          <td>0.6</td>
+          <td>0.55</td>
           <td>Minimum LLM confidence to trade (0-1)</td>
         </tr>
         <tr>
           <td><code>position_size_pct_of_cash</code></td>
-          <td>15</td>
-          <td>Max % of available cash per trade before candidate score and risk-budget sizing</td>
+          <td>35</td>
+          <td>Max % of available buying power per trade before candidate score and risk-budget sizing</td>
         </tr>
         <tr>
           <td><code>entry_require_technical_data</code></td>
@@ -237,7 +237,7 @@
         </tr>
         <tr>
           <td><code>unknown_sector_max_positions</code></td>
-          <td>2</td>
+          <td>4</td>
           <td>Separate concentration cap for symbols whose sector cannot be inferred</td>
         </tr>
       </table>

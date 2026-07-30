@@ -79,7 +79,7 @@ export function getDefaultPolicyConfig(
   overrides: Partial<Omit<PolicyConfig, "options">> & { options?: Partial<OptionsPolicyConfig> } = {}
 ): PolicyConfig {
   const baseConfig: PolicyConfig = {
-    max_position_pct_equity: parseNumber(env.DEFAULT_MAX_POSITION_PCT, 0.1),
+    max_position_pct_equity: parseNumber(env.DEFAULT_MAX_POSITION_PCT, 0.2),
     max_open_positions: parseNumber(env.DEFAULT_MAX_OPEN_POSITIONS, 10),
     max_notional_per_trade: parseNumber(env.DEFAULT_MAX_NOTIONAL_PER_TRADE, 5000),
     allowed_order_types: ["market", "limit", "stop", "stop_limit"],
@@ -99,7 +99,7 @@ export function getDefaultPolicyConfig(
     extended_hours_allowed: false,
     approval_token_ttl_seconds: parseNumber(env.DEFAULT_APPROVAL_TTL_SECONDS, 300),
     allow_short_selling: false,
-    use_cash_only: true,
+    use_cash_only: false,
     options: getDefaultOptionsPolicyConfig(),
   };
 
