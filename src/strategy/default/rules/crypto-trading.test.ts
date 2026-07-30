@@ -113,7 +113,7 @@ describe("crypto trading", () => {
     expect(complete).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to heuristic crypto research after repeated parse failures", async () => {
+  it("returns no crypto research after repeated malformed LLM responses", async () => {
     vi.mocked(createAlpacaProviders).mockReturnValue({
       marketData: {
         getCryptoSnapshot: vi.fn(async () => null),
@@ -147,19 +147,50 @@ describe("crypto trading", () => {
       0.6
     );
 
-    expect(result).toMatchObject({
-      symbol: "BTC/USD",
-      verdict: "BUY",
-      entry_quality: "fair",
-    });
-    expect(result?.reasoning).toContain("malformed JSON");
-    expect(result?.red_flags).toContain(
-      "Fallback crypto research used because the LLM was unavailable or rate-limited."
+    expect(result).toBeNull();
+  });
+
+  it("rejects truncated crypto research verdicts", async () => {
+    vi.mocked(createAlpacaProviders).mockReturnValue({
+      marketData: {
+        getCryptoSnapshot: vi.fn(async () => null),
+      },
+    } as never);
+
+    const complete = vi.fn(async () => ({
+      content:
+        '{"verdict":"SK","confidence":0.7,"entry_quality":"fair","reasoning":"Looks incomplete.","red_flags":[],"catalysts":[]}',
+      usage: { prompt_tokens: 10, completion_tokens: 20 },
+    }));
+
+    const result = await researchCrypto(
+      {
+        env: {} as never,
+        config: {
+          llm_model: "test-model",
+          min_analyst_confidence: 0.6,
+          crypto_momentum_threshold: 2,
+        },
+        llm: { complete } as never,
+        log: () => {},
+        trackLLMCost: () => 0,
+        sleep: async () => {},
+        broker: {} as never,
+        state: {} as never,
+        signals: [],
+        positionEntries: {},
+      } as never,
+      "BTC/USD",
+      3,
+      0.6
     );
+
+    expect(result).toBeNull();
+    expect(complete).toHaveBeenCalledTimes(3);
   });
 
   it("treats compact crypto position symbols as already held", async () => {
-    const buy = vi.fn(async () => true);
+    const buy = vi.fn(async () => ({ submitted: true }));
 
     const ctx = {
       config: {
@@ -187,7 +218,7 @@ describe("crypto trading", () => {
       broker: {
         buy,
         sell: vi.fn(async () => true),
-        getAccount: vi.fn(async () => ({ cash: 10000 })),
+        getAccount: vi.fn(async () => ({ cash: 10000, buying_power: 10000 })),
       },
       state: {
         get: () => undefined,
@@ -210,7 +241,7 @@ describe("crypto trading", () => {
   });
 
   it("does not rebuy crypto while a submitted buy is still pending", async () => {
-    const buy = vi.fn(async () => true);
+    const buy = vi.fn(async () => ({ submitted: true }));
     const cachedResearch: ResearchResult = {
       symbol: "POL/USD",
       verdict: "BUY",
@@ -252,7 +283,7 @@ describe("crypto trading", () => {
       broker: {
         buy,
         sell: vi.fn(async () => true),
-        getAccount: vi.fn(async () => ({ cash: 10000 })),
+        getAccount: vi.fn(async () => ({ cash: 10000, buying_power: 10000 })),
       },
       state: {
         get: (key: string) => state[key],
@@ -269,7 +300,7 @@ describe("crypto trading", () => {
   });
 
   it("promotes cached WAIT crypto research when confidence is actionable", async () => {
-    const buy = vi.fn(async () => true);
+    const buy = vi.fn(async () => ({ submitted: true }));
     const positionEntries: Record<string, ResearchResult | unknown> = {};
     const cachedResearch: ResearchResult = {
       symbol: "BTC/USD",
@@ -308,7 +339,7 @@ describe("crypto trading", () => {
       broker: {
         buy,
         sell: vi.fn(async () => true),
-        getAccount: vi.fn(async () => ({ cash: 10000 })),
+        getAccount: vi.fn(async () => ({ cash: 10000, buying_power: 10000 })),
       },
       state: {
         get: (key: string) => (key === "cryptoResearch_BTC/USD" ? cachedResearch : undefined),

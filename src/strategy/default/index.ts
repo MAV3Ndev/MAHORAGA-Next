@@ -83,6 +83,7 @@ export const defaultStrategy: Strategy = {
         symbol: candidate.symbol,
         sentiment: candidate.sentiment,
         sources: candidate.sources,
+        signals: candidate.signals,
         score: candidate.score,
         quality: candidate.quality,
       }));

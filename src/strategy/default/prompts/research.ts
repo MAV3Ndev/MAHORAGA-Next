@@ -4,7 +4,7 @@
  * These return PromptTemplate objects. The core harness makes the LLM call.
  */
 
-import type { Position } from "../../../core/types";
+import type { Position, Signal } from "../../../core/types";
 import type {
   PromptTemplate,
   ResearchPositionPromptBuilder,
@@ -20,6 +20,7 @@ export const researchSignalPrompt: ResearchSignalPromptBuilder = (
   symbol: string,
   sentiment: number,
   sources: string[],
+  signals: Signal[],
   price: number,
   ctx
 ): PromptTemplate => {
@@ -39,6 +40,7 @@ CURRENT DATA:
 - Price: $${price}
 ${technicalData}
 ${momentumData}
+${formatSignalEvidence(signals)}
 
 EVALUATION CRITERIA:
 1. ENTRY QUALITY: Is this a pullback entry or a breakout? RSI 40-55 suggests pullback, >70 overbought
@@ -49,9 +51,11 @@ EVALUATION CRITERIA:
 
 DECISION GUIDANCE:
 - Use BUY if the setup is actionable now and the thesis is strong enough to enter immediately
+- BUY does not require a perfect setup; fair or good entries are acceptable when downside is defined and there are few red flags
 - Use WAIT only if the idea is interesting but the current entry is not good enough yet
 - Use SKIP for noisy, low-quality, illiquid, or obviously speculative setups
 - Be stricter on meme tokens, non-tradable symbols, and unclear catalysts
+- Treat raw signal details as evidence. If the only evidence is generic retail chatter, routine SEC filings, stale headlines, or unclear symbol-level attribution, say that explicitly.
 
 Provide your analysis with these exact JSON fields:
 {
@@ -66,9 +70,42 @@ Provide your analysis with these exact JSON fields:
   "take_profit_pct": number (recommended take profit as % from entry)
 }`,
     model: ctx.config.llm_analyst_model,
-    maxTokens: 400,
+    maxTokens: 700,
   };
 };
+
+function formatSignalEvidence(signals: Signal[]): string {
+  if (signals.length === 0) {
+    return "SIGNAL EVIDENCE: No raw signal evidence available";
+  }
+
+  const sorted = [...signals]
+    .sort((a, b) => {
+      const qualityA = a.quality_score ?? a.source_weight ?? 0;
+      const qualityB = b.quality_score ?? b.source_weight ?? 0;
+      if (qualityA !== qualityB) return qualityB - qualityA;
+      return b.volume - a.volume;
+    })
+    .slice(0, 8);
+
+  const lines = sorted.map((signal, index) => {
+    const fields = [
+      `source=${signal.source}`,
+      `detail=${signal.source_detail}`,
+      `raw=${signal.raw_sentiment.toFixed(2)}`,
+      `normalized=${signal.sentiment.toFixed(2)}`,
+      `volume=${signal.volume}`,
+      `fresh=${signal.freshness.toFixed(2)}`,
+      `quality=${(signal.quality_score ?? signal.source_weight ?? 0).toFixed(2)}`,
+    ];
+    if (signal.bullish !== undefined || signal.bearish !== undefined) {
+      fields.push(`bullish=${signal.bullish ?? 0}`, `bearish=${signal.bearish ?? 0}`);
+    }
+    return `${index + 1}. ${fields.join(", ")} | ${signal.reason}`;
+  });
+
+  return `SIGNAL EVIDENCE:\n${lines.join("\n")}`;
+}
 
 /**
  * Position research prompt — risk assessment for a held position.

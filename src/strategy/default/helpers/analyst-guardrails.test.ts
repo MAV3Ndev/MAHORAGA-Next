@@ -31,7 +31,7 @@ describe("analyst guardrails", () => {
   it("scales low-confidence analyst buys down before the max notional cap", () => {
     expect(
       computeAnalystRecommendationNotional({
-        cash: 75000,
+        buyingPower: 75000,
         basePositionSizePct: 25,
         confidence: 0.55,
         maxPositionValue: 10000,
@@ -45,7 +45,7 @@ describe("analyst guardrails", () => {
   it("respects the llm suggested size percentage when it is lower than the config", () => {
     expect(
       computeAnalystRecommendationNotional({
-        cash: 80000,
+        buyingPower: 80000,
         basePositionSizePct: 25,
         confidence: 0.8,
         maxPositionValue: 10000,

@@ -39,6 +39,7 @@ import {
 } from "../core/position-history";
 import { getPositionResearchCandidates, shouldRunPositionResearch } from "../core/position-research";
 import { isRateLimitError, isUnknownModelError, ResearchService } from "../core/research-service";
+import { normalizeResearchAnalysis } from "../core/research-validation";
 import {
   buildSocialSnapshot,
   getSocialSnapshotCache,
@@ -101,11 +102,11 @@ interface MomentumDataCacheEntry {
   volume_change?: number;
 }
 
-const ANALYST_BUY_MAX_NOTIONAL = 2_500;
 const ANALYST_BUY_RESEARCH_MAX_AGE_MS = 15 * 60 * 1000;
 const ANALYST_BUY_COOLDOWN_AFTER_SELL_MS = 2 * 60 * 60 * 1000;
 const ANALYST_BUY_MAX_ABS_PRICE_CHANGE_24H_PCT = 30;
 const ANALYST_BUY_MAX_ABS_PRICE_CHANGE_1H_PCT = 15;
+const STRATEGY_ENTRY_MIN_CONFIDENCE_FLOOR = 0.45;
 
 interface TradeDecisionLogParams {
   source: string;
@@ -1383,7 +1384,7 @@ export class MahoragaHarness extends DurableObject<Env> {
     const positions = await ctx.broker.getPositions();
     const heldSymbols = new Set(positions.map((p) => p.symbol));
 
-    const allSignals = this.state.signalCache;
+    const allSignals = this.getStockSignals();
     const notHeld = allSignals.filter((s) => !heldSymbols.has(s.symbol));
     const candidates = activeStrategy.capabilities?.selectSignalResearchCandidates
       ? await activeStrategy.capabilities.selectSignalResearchCandidates(ctx, notHeld, limit)
@@ -1420,7 +1421,13 @@ export class MahoragaHarness extends DurableObject<Env> {
 
     const results: ResearchResult[] = [];
     for (const candidate of candidates) {
-      const analysis = await this.callSignalResearch(ctx, candidate.symbol, candidate.sentiment, candidate.sources);
+      const analysis = await this.callSignalResearch(
+        ctx,
+        candidate.symbol,
+        candidate.sentiment,
+        candidate.sources,
+        candidate.signals
+      );
       if (analysis) results.push(analysis);
       await this.sleep(500);
     }
@@ -1428,11 +1435,17 @@ export class MahoragaHarness extends DurableObject<Env> {
     return results;
   }
 
+  private getStockSignals(signals: Signal[] = this.state.signalCache): Signal[] {
+    const cryptoSymbols = this.state.config.crypto_symbols || [];
+    return signals.filter((signal) => !signal.isCrypto && !isCryptoSymbol(signal.symbol, cryptoSymbols));
+  }
+
   private async callSignalResearch(
     ctx: StrategyContext,
     symbol: string,
     sentiment: number,
-    sources: string[]
+    sources: string[],
+    signals: Signal[]
   ): Promise<ResearchResult | null> {
     if (!this._llm || !activeStrategy.prompts.researchSignal) return null;
 
@@ -1461,38 +1474,15 @@ export class MahoragaHarness extends DurableObject<Env> {
         price = snapshot?.latest_trade?.price || snapshot?.latest_quote?.ask_price || 0;
       }
 
-      const prompt = activeStrategy.prompts.researchSignal(symbol, sentiment, sources, price, ctx);
-      const { analysis } = await this.createResearchService().completePromptJson<{
-        verdict: "BUY" | "SKIP" | "WAIT";
-        confidence: number;
-        entry_quality: "excellent" | "good" | "fair" | "poor";
-        reasoning: string;
-        red_flags: string[];
-        catalysts: string[];
-        recommended_entry_zone?: string;
-        stop_loss_pct?: number;
-        take_profit_pct?: number;
-      }>({
+      const prompt = activeStrategy.prompts.researchSignal(symbol, sentiment, sources, signals, price, ctx);
+      const { analysis: result } = await this.createResearchService().completePromptJson<ResearchResult>({
         prompt,
         logAgent: "SignalResearch",
         defaultMaxTokens: 250,
         temperature: 0.3,
+        validate: (analysis) =>
+          normalizeResearchAnalysis(symbol, analysis as Parameters<typeof normalizeResearchAnalysis>[1], { sentiment }),
       });
-
-      const result: ResearchResult = {
-        symbol,
-        verdict: analysis.verdict,
-        confidence: analysis.confidence,
-        entry_quality: analysis.entry_quality,
-        reasoning: analysis.reasoning,
-        red_flags: analysis.red_flags || [],
-        catalysts: analysis.catalysts || [],
-        sentiment,
-        timestamp: Date.now(),
-        recommended_entry_zone: analysis.recommended_entry_zone,
-        stop_loss_pct: analysis.stop_loss_pct,
-        take_profit_pct: analysis.take_profit_pct,
-      };
 
       this.state.signalResearch[symbol] = result;
       this.log("SignalResearch", "signal_researched", {
@@ -1500,6 +1490,9 @@ export class MahoragaHarness extends DurableObject<Env> {
         verdict: result.verdict,
         confidence: result.confidence,
         quality: result.entry_quality,
+        reason_preview: result.reasoning.slice(0, 240),
+        red_flags_count: result.red_flags.length,
+        catalysts_count: result.catalysts.length,
       });
       await this.recordTradeDecision({
         source: "signal_research",
@@ -1663,7 +1656,8 @@ export class MahoragaHarness extends DurableObject<Env> {
       return;
     }
 
-    if (this.state.signalCache.length === 0) {
+    const stockSignals = this.getStockSignals();
+    if (stockSignals.length === 0) {
       this.log("Analyst", "skipped_no_signals", { signal_cache_size: 0 });
       return;
     }
@@ -1672,7 +1666,7 @@ export class MahoragaHarness extends DurableObject<Env> {
     const research = Object.values(this.state.signalResearch);
     if (research.length === 0) {
       this.log("Analyst", "skipped_no_research", {
-        signal_cache_size: this.state.signalCache.length,
+        signal_cache_size: stockSignals.length,
         last_research_run: this.state.lastResearchRun,
         research_interval_ms: 120_000,
       });
@@ -1708,14 +1702,18 @@ export class MahoragaHarness extends DurableObject<Env> {
         }
       }
 
-      if (finalConfidence < this.state.config.min_analyst_confidence) {
+      const strategyEntryMinConfidence = Math.max(
+        STRATEGY_ENTRY_MIN_CONFIDENCE_FLOOR,
+        this.state.config.min_analyst_confidence - 0.15
+      );
+      if (finalConfidence < strategyEntryMinConfidence) {
         await this.recordEntryDecision(
           "strategy_entry",
           { ...entry, confidence: finalConfidence },
           "filtered",
           account,
           positions,
-          { reason: "below_min_confidence", min_confidence: this.state.config.min_analyst_confidence }
+          { reason: "below_min_confidence", min_confidence: strategyEntryMinConfidence }
         );
         continue;
       }
@@ -1776,11 +1774,12 @@ export class MahoragaHarness extends DurableObject<Env> {
       await this.recordEntryDecision(
         "strategy_entry",
         { ...entry, confidence: finalConfidence },
-        result ? "submitted" : "blocked",
+        result.submitted ? "submitted" : "blocked",
         account,
-        positions
+        positions,
+        result.submitted ? {} : { reason: result.reason, ...(result.metadata ?? {}) }
       );
-      if (result) {
+      if (result.submitted) {
         heldSymbols.add(entry.symbol);
         currentOpenPositions = heldSymbols.size;
         this.state.positionEntries[entry.symbol] = this.createPositionEntry(
@@ -1794,7 +1793,7 @@ export class MahoragaHarness extends DurableObject<Env> {
     }
 
     // LLM analyst for additional recommendations
-    const analysis = await this.callAnalystLLM(ctx, this.state.signalCache, positions, account);
+    const analysis = await this.callAnalystLLM(ctx, stockSignals, positions, account);
     const entrySymbols = new Set(entries.map((e) => e.symbol));
     const dynamicState = this.state as unknown as Record<string, unknown>;
     const momentumCache = dynamicState.momentumDataCache as Record<string, MomentumDataCacheEntry> | undefined;
@@ -1976,10 +1975,10 @@ export class MahoragaHarness extends DurableObject<Env> {
         }
 
         const notional = computeAnalystRecommendationNotional({
-          cash: account.cash,
+          buyingPower: account.buying_power,
           basePositionSizePct: this.state.config.position_size_pct_of_cash,
           confidence: rec.confidence,
-          maxPositionValue: Math.min(this.state.config.max_position_value, ANALYST_BUY_MAX_NOTIONAL),
+          maxPositionValue: this.state.config.max_position_value,
           suggestedSizePct: rec.suggested_size_pct,
           convictionScalingEnabled: this.state.config.llm_size_conviction_scaling,
           lowConfidenceMultiplier: this.state.config.llm_size_low_confidence_multiplier,
@@ -2005,7 +2004,6 @@ export class MahoragaHarness extends DurableObject<Env> {
           symbol: rec.symbol,
           confidence: rec.confidence,
           suggested_size_pct: rec.suggested_size_pct,
-          max_analyst_notional: ANALYST_BUY_MAX_NOTIONAL,
           notional: Number(notional.toFixed(2)),
         });
 
@@ -2014,14 +2012,22 @@ export class MahoragaHarness extends DurableObject<Env> {
           source: "analyst_recommendation",
           symbol: rec.symbol,
           action: "BUY",
-          status: result ? "submitted" : "blocked",
+          status: result.submitted ? "submitted" : "blocked",
           confidence: rec.confidence,
           reason: rec.reasoning,
           notional,
-          metadata: { suggested_size_pct: rec.suggested_size_pct, max_analyst_notional: ANALYST_BUY_MAX_NOTIONAL },
-          snapshot: this.buildTradeDecisionSnapshot(rec.symbol, { account, positions, recommendation: rec }),
+          metadata: {
+            suggested_size_pct: rec.suggested_size_pct,
+            ...(result.submitted ? {} : { reason: result.reason, ...(result.metadata ?? {}) }),
+          },
+          snapshot: this.buildTradeDecisionSnapshot(rec.symbol, {
+            account,
+            positions,
+            recommendation: rec,
+            broker_result: result,
+          }),
         });
-        if (result) {
+        if (result.submitted) {
           heldSymbols.add(rec.symbol);
           currentOpenPositions = heldSymbols.size;
           this.state.positionEntries[rec.symbol] = this.createPositionEntry(
@@ -2043,15 +2049,16 @@ export class MahoragaHarness extends DurableObject<Env> {
   private async runPreMarketAnalysis(ctx: StrategyContext): Promise<void> {
     const [account, positions] = await Promise.all([ctx.broker.getAccount(), ctx.broker.getPositions()]);
 
-    if (!account || this.state.signalCache.length === 0) return;
+    const stockSignals = this.getStockSignals();
+    if (!account || stockSignals.length === 0) return;
 
     this.log("System", "premarket_analysis_starting", {
-      signals: this.state.signalCache.length,
+      signals: stockSignals.length,
       researched: Object.keys(this.state.signalResearch).length,
     });
 
     const signalResearch = await this.researchTopSignals(ctx, 10);
-    const analysis = await this.callAnalystLLM(ctx, this.state.signalCache, positions, account);
+    const analysis = await this.callAnalystLLM(ctx, stockSignals, positions, account);
 
     this.state.premarketPlan = {
       timestamp: Date.now(),
@@ -2149,10 +2156,10 @@ export class MahoragaHarness extends DurableObject<Env> {
         }
 
         const notional = computeAnalystRecommendationNotional({
-          cash: account.cash,
+          buyingPower: account.buying_power,
           basePositionSizePct: this.state.config.position_size_pct_of_cash,
           confidence: rec.confidence,
-          maxPositionValue: Math.min(this.state.config.max_position_value, ANALYST_BUY_MAX_NOTIONAL),
+          maxPositionValue: this.state.config.max_position_value,
           suggestedSizePct: rec.suggested_size_pct,
           convictionScalingEnabled: this.state.config.llm_size_conviction_scaling,
           lowConfidenceMultiplier: this.state.config.llm_size_low_confidence_multiplier,
@@ -2178,14 +2185,22 @@ export class MahoragaHarness extends DurableObject<Env> {
           source: "premarket_plan",
           symbol: rec.symbol,
           action: "BUY",
-          status: result ? "submitted" : "blocked",
+          status: result.submitted ? "submitted" : "blocked",
           confidence: rec.confidence,
           reason: rec.reasoning,
           notional,
-          metadata: { suggested_size_pct: rec.suggested_size_pct, max_analyst_notional: ANALYST_BUY_MAX_NOTIONAL },
-          snapshot: this.buildTradeDecisionSnapshot(rec.symbol, { account, positions, recommendation: rec }),
+          metadata: {
+            suggested_size_pct: rec.suggested_size_pct,
+            ...(result.submitted ? {} : { reason: result.reason, ...(result.metadata ?? {}) }),
+          },
+          snapshot: this.buildTradeDecisionSnapshot(rec.symbol, {
+            account,
+            positions,
+            recommendation: rec,
+            broker_result: result,
+          }),
         });
-        if (result) {
+        if (result.submitted) {
           heldSymbols.add(rec.symbol);
           this.state.positionEntries[rec.symbol] = this.createPositionEntry(
             rec.symbol,
@@ -3181,7 +3196,10 @@ function selectSignalResearchCandidatesFallback(
   minSentimentScore: number,
   limit: number
 ): StrategySignalResearchCandidate[] {
-  const aggregated = new Map<string, { sentiment: number; rawSentiment: number; sources: string[]; count: number }>();
+  const aggregated = new Map<
+    string,
+    { sentiment: number; rawSentiment: number; sources: string[]; signals: Signal[]; count: number }
+  >();
   for (const signal of signals) {
     const existing = aggregated.get(signal.symbol);
     if (!existing) {
@@ -3189,6 +3207,7 @@ function selectSignalResearchCandidatesFallback(
         sentiment: signal.sentiment,
         rawSentiment: signal.raw_sentiment,
         sources: [signal.source],
+        signals: [signal],
         count: 1,
       });
       continue;
@@ -3197,6 +3216,7 @@ function selectSignalResearchCandidatesFallback(
     existing.sentiment += signal.sentiment;
     existing.rawSentiment += signal.raw_sentiment;
     existing.sources.push(signal.source);
+    existing.signals.push(signal);
     existing.count++;
   }
 
@@ -3205,6 +3225,7 @@ function selectSignalResearchCandidatesFallback(
       symbol,
       sentiment: data.sentiment / data.count,
       sources: Array.from(new Set(data.sources)),
+      signals: data.signals,
       score: data.sentiment / data.count,
       quality: undefined,
       rawSentiment: data.rawSentiment / data.count,

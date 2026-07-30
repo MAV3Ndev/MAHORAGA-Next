@@ -54,8 +54,8 @@ export interface StrategyContext {
     getAccount(): Promise<Account>;
     getPositions(): Promise<Position[]>;
     getClock(): Promise<MarketClock>;
-    /** Execute a buy. Returns true if the order was submitted. */
-    buy(symbol: string, notional: number, reason: string): Promise<boolean>;
+    /** Execute a buy and return the submission or rejection details. */
+    buy(symbol: string, notional: number, reason: string): Promise<BrokerBuyResult>;
     /** Execute a long options buy. Returns true if the order was submitted. */
     buyOption(contractSymbol: string, quantity: number, reason: string): Promise<boolean>;
     /** Close a position. Returns true if the close was submitted. */
@@ -102,6 +102,7 @@ export type ResearchSignalPromptBuilder = (
   symbol: string,
   sentiment: number,
   sources: string[],
+  signals: Signal[],
   price: number,
   ctx: StrategyContext
 ) => PromptTemplate;
@@ -166,8 +167,15 @@ export interface StrategySignalResearchCandidate {
   symbol: string;
   sentiment: number;
   sources: string[];
+  signals: Signal[];
   score?: number;
   quality?: number;
+}
+
+export interface BrokerBuyResult {
+  submitted: boolean;
+  reason?: string;
+  metadata?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------

@@ -92,6 +92,55 @@ describe("research service", () => {
     });
   });
 
+  it("retries JSON prompts when parsed output fails validation", async () => {
+    const maxTokens: number[] = [];
+    const logs: Array<{ agent: string; action: string; details: Record<string, unknown> }> = [];
+    const llm: LLMProvider = {
+      async complete(params) {
+        maxTokens.push(params.max_tokens || 0);
+        if (maxTokens.length === 1) {
+          return {
+            content: '{"confidence":0.7}',
+            usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+          };
+        }
+
+        return {
+          content: '{"verdict":"SKIP","confidence":0.7}',
+          usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+        };
+      },
+    };
+
+    const service = new ResearchService({
+      getLlm: () => llm,
+      getConfig: () => ({ ...DEFAULT_CONFIG, llm_model: "MiniMax-M3", llm_analyst_model: "MiniMax-M3" }),
+      log: (agent, action, details) => logs.push({ agent, action, details }),
+      trackLLMCost: () => 0,
+    });
+
+    const result = await service.completePromptJson<{ verdict: string; confidence: number }>({
+      prompt: { system: "system", user: "user", model: "MiniMax-M3", maxTokens: 400 },
+      logAgent: "SignalResearch",
+      defaultMaxTokens: 100,
+      temperature: 0.3,
+      validate: (analysis) => {
+        const payload = analysis as { verdict?: string; confidence?: number };
+        if (!payload.verdict) throw new Error("Invalid research verdict for WEN: undefined");
+        return payload;
+      },
+    });
+
+    expect(result).toEqual({ analysis: { verdict: "SKIP", confidence: 0.7 }, model: "MiniMax-M3" });
+    expect(maxTokens).toEqual([400, 1200]);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      agent: "SignalResearch",
+      action: "json_parse_retry",
+      details: { reason: "Error: Invalid research verdict for WEN: undefined" },
+    });
+  });
+
   it("identifies transient LLM error categories", () => {
     expect(isUnknownModelError(new Error('{"code":"1211"}'))).toBe(true);
     expect(isRateLimitError(new Error("429 rate_limit"))).toBe(true);

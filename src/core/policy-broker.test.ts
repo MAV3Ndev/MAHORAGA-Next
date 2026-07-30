@@ -179,7 +179,11 @@ describe("createPolicyBroker", () => {
 
     const result = await broker.buy("BTC/USD", 1000, "Crypto momentum");
 
-    expect(result).toBe(false);
+    expect(result).toEqual({
+      submitted: false,
+      reason: "buy_order_already_open",
+      metadata: { order_status: "accepted", order_type: "market" },
+    });
     expect(trading.createOrder).not.toHaveBeenCalled();
     expect(deps.log).toHaveBeenCalledWith(
       "PolicyBroker",
@@ -199,7 +203,10 @@ describe("createPolicyBroker", () => {
 
     const result = await broker.buy("BTC/USD", 1000, "Crypto momentum");
 
-    expect(result).toBe(true);
+    expect(result).toEqual({
+      submitted: true,
+      metadata: { order_status: "accepted", order_type: "market", notional: 1000 },
+    });
     expect(trading.createOrder).toHaveBeenCalledWith({
       symbol: "BTC/USD",
       notional: 1000,
@@ -222,6 +229,53 @@ describe("createPolicyBroker", () => {
       isCrypto: true,
       status: "accepted",
       orderType: "market",
+    });
+  });
+
+  it("allows the aggressive $15k position using buying power under the 20% equity cap", async () => {
+    const { deps, trading } = createDeps({ clock: { is_open: true } });
+    trading.getAccount.mockResolvedValue({
+      cash: 10_000,
+      buying_power: 70_000,
+      daytrading_buying_power: 70_000,
+      equity: 100_000,
+    });
+    deps.policyConfig = getDefaultPolicyConfig({} as never, {
+      max_position_pct_equity: 0.2,
+      max_notional_per_trade: 15_000,
+      use_cash_only: false,
+    });
+    const broker = createPolicyBroker(deps);
+
+    const result = await broker.buy("NVDA", 15_000, "Aggressive entry");
+
+    expect(result.submitted).toBe(true);
+    expect(trading.createOrder).toHaveBeenCalledWith({
+      symbol: "NVDA",
+      notional: 15_000,
+      side: "buy",
+      type: "market",
+      time_in_force: "day",
+    });
+  });
+
+  it("returns policy violations when a buy exceeds the position cap", async () => {
+    const { deps } = createDeps({ clock: { is_open: true } });
+    deps.policyConfig = getDefaultPolicyConfig({} as never, {
+      max_position_pct_equity: 0.1,
+      max_notional_per_trade: 15_000,
+      use_cash_only: false,
+    });
+    const broker = createPolicyBroker(deps);
+
+    const result = await broker.buy("NVDA", 1_500, "Oversized entry");
+
+    expect(result).toEqual({
+      submitted: false,
+      reason: "policy_rejected",
+      metadata: expect.objectContaining({
+        violations: expect.arrayContaining([expect.objectContaining({ rule: "max_position_pct" })]),
+      }),
     });
   });
 

@@ -32,7 +32,7 @@ function createTestContext(): StrategyContext {
         next_open: new Date().toISOString(),
         next_close: new Date().toISOString(),
       }),
-      buy: async () => true,
+      buy: async () => ({ submitted: true }),
       buyOption: async () => true,
       sell: async () => true,
       syncProtectiveStops: async () => {},
@@ -89,13 +89,14 @@ function createResearchResult(overrides: Partial<ResearchResult> = {}): Research
 }
 
 describe("selectEntries", () => {
-  it("does not promote WAIT verdicts into entries", () => {
+  it("promotes fair WAIT verdicts with enough confidence and few red flags", () => {
     const ctx = createTestContext();
     const account = createAccount();
 
     const result = selectEntries(ctx, [createResearchResult()], [], account);
 
-    expect(result).toHaveLength(0);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.reason).toContain("Promoted WAIT");
   });
 
   it("does not promote poor-quality WAIT verdicts", () => {
@@ -112,13 +113,19 @@ describe("selectEntries", () => {
     expect(result).toHaveLength(0);
   });
 
-  it("does not promote WAIT verdicts with multiple red flags", () => {
+  it("does not promote WAIT verdicts with too many red flags", () => {
     const ctx = createTestContext();
     const account = createAccount();
 
     const result = selectEntries(
       ctx,
-      [createResearchResult({ red_flags: ["Dilution risk", "Weak volume"], confidence: 0.7 })],
+      [
+        createResearchResult({
+          red_flags: ["Dilution risk", "Weak volume", "Crowded trade", "No clean catalyst"],
+          catalysts: ["Enterprise software momentum"],
+          confidence: 0.7,
+        }),
+      ],
       [],
       account
     );
@@ -126,13 +133,13 @@ describe("selectEntries", () => {
     expect(result).toHaveLength(0);
   });
 
-  it("does not promote excellent WAIT verdicts without an explicit BUY", () => {
+  it("does not promote low-confidence WAIT verdicts", () => {
     const ctx = createTestContext();
     const account = createAccount();
 
     const result = selectEntries(
       ctx,
-      [createResearchResult({ entry_quality: "excellent", confidence: 0.58, reasoning: "Strong but not confirmed." })],
+      [createResearchResult({ entry_quality: "excellent", confidence: 0.42, reasoning: "Strong but not confirmed." })],
       [],
       account
     );
@@ -153,6 +160,27 @@ describe("selectEntries", () => {
     );
 
     expect(result).toHaveLength(1);
-    expect(result[0]?.notional).toBeCloseTo(1500);
+    expect(result[0]?.notional).toBeCloseTo(3000);
+  });
+
+  it("does not create stock entries from configured crypto symbols", () => {
+    const ctx = createTestContext();
+    const account = createAccount();
+
+    const result = selectEntries(
+      ctx,
+      [
+        createResearchResult({
+          symbol: "ETH/USD",
+          verdict: "BUY",
+          confidence: 0.9,
+          entry_quality: "excellent",
+        }),
+      ],
+      [],
+      account
+    );
+
+    expect(result).toHaveLength(0);
   });
 });
