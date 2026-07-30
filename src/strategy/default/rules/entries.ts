@@ -5,8 +5,8 @@
  * Core ALWAYS enforces stop-loss from config as a safety floor.
  */
 
-import type { Account, Position, ResearchResult } from "../../../core/types";
 import { isCryptoSymbol } from "../../../core/asset-symbols";
+import type { Account, Position, ResearchResult } from "../../../core/types";
 import type { BuyCandidate, StrategyContext } from "../../types";
 import { type CandidateScore, calculateCandidateScores } from "./candidate-score";
 import { checkEntryTiming, type TechnicalData } from "./entry-timing";
