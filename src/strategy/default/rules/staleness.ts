@@ -86,9 +86,7 @@ export function analyzeStaleness(
     hasCurrentSocialVolume &&
     volumeRatio <= config.stale_social_volume_decay;
   const isStale =
-    stalenessScore >= 70 ||
-    midHoldMomentumFailed ||
-    (holdDays >= staleMaxHoldDays && pnlPct < staleMinGainPct);
+    stalenessScore >= 70 || midHoldMomentumFailed || (holdDays >= staleMaxHoldDays && pnlPct < staleMinGainPct);
 
   return {
     isStale,

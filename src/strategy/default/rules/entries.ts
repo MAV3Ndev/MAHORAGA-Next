@@ -312,9 +312,10 @@ function isPromotableWait(result: ResearchResult, ctx: StrategyContext): boolean
 }
 
 function hasWaitEntryConfirmation(symbol: string, ctx: StrategyContext): boolean {
-  const momentum = ctx.state.get<
-    Record<string, { price_change_1h?: number; price_change_24h?: number }>
-  >("momentumDataCache")?.[symbol];
+  const momentum =
+    ctx.state.get<Record<string, { price_change_1h?: number; price_change_24h?: number }>>("momentumDataCache")?.[
+      symbol
+    ];
   const priceChange1h = momentum?.price_change_1h;
   const priceChange24h = momentum?.price_change_24h;
 
@@ -330,8 +331,11 @@ function hasWaitEntryConfirmation(symbol: string, ctx: StrategyContext): boolean
     (Number.isFinite(priceChange24h) && (priceChange24h as number) <= WAIT_PULLBACK_24H_PCT) ||
     (Number.isFinite(priceChange1h) && (priceChange1h as number) <= 0);
   const hasTechnicalConfirmation =
-    (technical.rsi !== undefined && technical.rsi >= ctx.config.entry_rsi_min && technical.rsi <= ctx.config.entry_rsi_max) ||
-    (technical.bb_lower !== undefined && technical.current_price > 0 &&
+    (technical.rsi !== undefined &&
+      technical.rsi >= ctx.config.entry_rsi_min &&
+      technical.rsi <= ctx.config.entry_rsi_max) ||
+    (technical.bb_lower !== undefined &&
+      technical.current_price > 0 &&
       (technical.current_price - technical.bb_lower) / technical.bb_lower <= ctx.config.entry_bb_lower_threshold) ||
     (technical.sma_20 !== undefined && technical.sma_50 !== undefined && technical.sma_20 > technical.sma_50);
 
