@@ -28,10 +28,10 @@ export const AgentConfigSchema = z
     after_hours_exit_limit_buffer_pct: z.number().min(0).max(5),
 
     stale_position_enabled: z.boolean(),
-    stale_min_hold_hours: z.number().min(0).max(168),
-    stale_max_hold_days: z.number().min(1).max(30),
-    stale_min_gain_pct: z.number().min(0).max(100),
-    stale_mid_hold_days: z.number().min(1).max(30),
+    stale_min_hold_hours: z.number().min(12).max(168),
+    stale_max_hold_days: z.number().min(3).max(30),
+    stale_min_gain_pct: z.number().min(5).max(100),
+    stale_mid_hold_days: z.number().min(2).max(30),
     stale_mid_min_gain_pct: z.number().min(0).max(100),
     stale_social_volume_decay: z.number().min(0).max(1),
 

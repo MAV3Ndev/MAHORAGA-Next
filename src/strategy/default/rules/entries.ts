@@ -14,6 +14,10 @@ import { analyzeMarketRegime, type MarketRegimeData } from "./market-regime";
 import { checkPortfolioRisk } from "./portfolio-risk";
 import { computeRiskSizedNotional } from "./risk-sizing";
 
+const WAIT_MAX_24H_SURGE_PCT = 4;
+const WAIT_MAX_1H_SURGE_PCT = 1.5;
+const WAIT_PULLBACK_24H_PCT = 1;
+
 /**
  * Select entry candidates from LLM-researched signals.
  *
@@ -303,7 +307,35 @@ function isPromotableWait(result: ResearchResult, ctx: StrategyContext): boolean
   if (result.entry_quality === "poor") return false;
   if (result.red_flags.length > 3) return false;
   if (result.red_flags.length > 1 && result.catalysts.length === 0) return false;
+  if (!hasWaitEntryConfirmation(result.symbol, ctx)) return false;
   return result.confidence >= getPromotableWaitThreshold(ctx);
+}
+
+function hasWaitEntryConfirmation(symbol: string, ctx: StrategyContext): boolean {
+  const momentum = ctx.state.get<
+    Record<string, { price_change_1h?: number; price_change_24h?: number }>
+  >("momentumDataCache")?.[symbol];
+  const priceChange1h = momentum?.price_change_1h;
+  const priceChange24h = momentum?.price_change_24h;
+
+  if (
+    (Number.isFinite(priceChange24h) && (priceChange24h as number) > WAIT_MAX_24H_SURGE_PCT) ||
+    (Number.isFinite(priceChange1h) && (priceChange1h as number) > WAIT_MAX_1H_SURGE_PCT)
+  ) {
+    return false;
+  }
+
+  const technical = getTechnicalData(symbol, ctx);
+  const hasPullback =
+    (Number.isFinite(priceChange24h) && (priceChange24h as number) <= WAIT_PULLBACK_24H_PCT) ||
+    (Number.isFinite(priceChange1h) && (priceChange1h as number) <= 0);
+  const hasTechnicalConfirmation =
+    (technical.rsi !== undefined && technical.rsi >= ctx.config.entry_rsi_min && technical.rsi <= ctx.config.entry_rsi_max) ||
+    (technical.bb_lower !== undefined && technical.current_price > 0 &&
+      (technical.current_price - technical.bb_lower) / technical.bb_lower <= ctx.config.entry_bb_lower_threshold) ||
+    (technical.sma_20 !== undefined && technical.sma_50 !== undefined && technical.sma_20 > technical.sma_50);
+
+  return hasPullback || hasTechnicalConfirmation;
 }
 
 function getRequiredEntryScore(result: ResearchResult, ctx: StrategyContext): number {

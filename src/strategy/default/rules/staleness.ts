@@ -9,6 +9,11 @@
 
 import type { AgentConfig, PositionEntry } from "../../../core/types";
 
+const STALE_MIN_HOLD_HOURS_FLOOR = 12;
+const STALE_MID_HOLD_DAYS_FLOOR = 2;
+const STALE_MAX_HOLD_DAYS_FLOOR = 3;
+const STALE_MIN_GAIN_PCT_FLOOR = 5;
+
 export interface StalenessResult {
   isStale: boolean;
   reason: string;
@@ -30,7 +35,12 @@ export function analyzeStaleness(
   const holdDays = holdHours / 24;
   const pnlPct = entry.entry_price > 0 ? ((currentPrice - entry.entry_price) / entry.entry_price) * 100 : 0;
 
-  if (holdHours < config.stale_min_hold_hours) {
+  const staleMinHoldHours = Math.max(config.stale_min_hold_hours, STALE_MIN_HOLD_HOURS_FLOOR);
+  const staleMidHoldDays = Math.max(config.stale_mid_hold_days, STALE_MID_HOLD_DAYS_FLOOR);
+  const staleMaxHoldDays = Math.max(config.stale_max_hold_days, STALE_MAX_HOLD_DAYS_FLOOR);
+  const staleMinGainPct = Math.max(config.stale_min_gain_pct, STALE_MIN_GAIN_PCT_FLOOR);
+
+  if (holdHours < staleMinHoldHours) {
     return { isStale: false, reason: `Too early (${holdHours.toFixed(1)}h)`, staleness_score: 0 };
   }
 
@@ -38,10 +48,6 @@ export function analyzeStaleness(
   let timeScore = 0;
   let priceScore = 0;
   const socialScore = 0;
-  const staleMidHoldDays = Number.isFinite(config.stale_mid_hold_days)
-    ? config.stale_mid_hold_days
-    : config.stale_max_hold_days;
-  const staleMaxHoldDays = Number.isFinite(config.stale_max_hold_days) ? config.stale_max_hold_days : staleMidHoldDays;
   const staleTimeWindowDays = staleMaxHoldDays - staleMidHoldDays;
 
   // Time-based (max 40 points)
@@ -74,7 +80,7 @@ export function analyzeStaleness(
   stalenessScore = Number.isFinite(stalenessScore) ? Math.min(100, stalenessScore) : 0;
 
   const midHoldMomentumFailed =
-    holdDays >= config.stale_mid_hold_days &&
+    holdDays >= staleMidHoldDays &&
     pnlPct < config.stale_mid_min_gain_pct &&
     entry.entry_social_volume > 0 &&
     hasCurrentSocialVolume &&
@@ -82,7 +88,7 @@ export function analyzeStaleness(
   const isStale =
     stalenessScore >= 70 ||
     midHoldMomentumFailed ||
-    (holdDays >= config.stale_max_hold_days && pnlPct < config.stale_min_gain_pct);
+    (holdDays >= staleMaxHoldDays && pnlPct < staleMinGainPct);
 
   return {
     isStale,
@@ -91,7 +97,7 @@ export function analyzeStaleness(
         ? `Mid-hold momentum failed: +${pnlPct.toFixed(1)}% after ${holdDays.toFixed(1)} days, volume ${(
             volumeRatio * 100
           ).toFixed(0)}% of entry`
-        : `Staleness score ${stalenessScore}/100, Held ${holdDays.toFixed(1)} days, below stale target ${config.stale_min_gain_pct.toFixed(1)}%`
+        : `Staleness score ${stalenessScore}/100, Held ${holdDays.toFixed(1)} days, below stale target ${staleMinGainPct.toFixed(1)}%`
       : `OK (score ${stalenessScore}/100)`,
     staleness_score: stalenessScore,
   };

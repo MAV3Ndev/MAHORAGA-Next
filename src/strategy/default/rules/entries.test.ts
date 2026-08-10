@@ -92,11 +92,22 @@ describe("selectEntries", () => {
   it("promotes fair WAIT verdicts with enough confidence and few red flags", () => {
     const ctx = createTestContext();
     const account = createAccount();
+    ctx.state.set("momentumDataCache", { NOW: { price_change_24h: -1.2, price_change_1h: -0.2 } });
 
     const result = selectEntries(ctx, [createResearchResult()], [], account);
 
     expect(result).toHaveLength(1);
     expect(result[0]?.reason).toContain("Promoted WAIT");
+  });
+
+  it("does not promote WAIT verdicts after a sharp surge", () => {
+    const ctx = createTestContext();
+    const account = createAccount();
+    ctx.state.set("momentumDataCache", { NOW: { price_change_24h: 6.5, price_change_1h: 0.2 } });
+
+    const result = selectEntries(ctx, [createResearchResult()], [], account);
+
+    expect(result).toHaveLength(0);
   });
 
   it("does not promote poor-quality WAIT verdicts", () => {

@@ -103,7 +103,7 @@ interface MomentumDataCacheEntry {
 }
 
 const ANALYST_BUY_RESEARCH_MAX_AGE_MS = 15 * 60 * 1000;
-const ANALYST_BUY_COOLDOWN_AFTER_SELL_MS = 2 * 60 * 60 * 1000;
+const ANALYST_BUY_COOLDOWN_AFTER_SELL_MS = 24 * 60 * 60 * 1000;
 const ANALYST_BUY_MAX_ABS_PRICE_CHANGE_24H_PCT = 30;
 const ANALYST_BUY_MAX_ABS_PRICE_CHANGE_1H_PCT = 15;
 const STRATEGY_ENTRY_MIN_CONFIDENCE_FLOOR = 0.45;
@@ -1676,6 +1676,16 @@ export class MahoragaHarness extends DurableObject<Env> {
     for (const entry of entries) {
       if (heldSymbols.has(entry.symbol)) continue;
       if (currentOpenPositions >= this.state.config.max_positions) break;
+
+      const cooldownUntil = this.getAnalystBuyCooldown(entry.symbol);
+      if (cooldownUntil) {
+        await this.recordEntryDecision("strategy_entry", entry, "blocked", account, positions, {
+          reason: "recent_sell_cooldown",
+          cooldown_until: cooldownUntil,
+          remaining_ms: cooldownUntil - Date.now(),
+        });
+        continue;
+      }
 
       let finalConfidence = entry.confidence;
 

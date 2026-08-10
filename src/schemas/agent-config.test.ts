@@ -20,7 +20,7 @@ function createValidConfig() {
     equity_entry_cutoff_minutes_before_close: 15,
     after_hours_exit_limit_buffer_pct: 0.25,
     stale_position_enabled: true,
-    stale_min_hold_hours: 4,
+    stale_min_hold_hours: 12,
     stale_max_hold_days: 7,
     stale_min_gain_pct: 5,
     stale_mid_hold_days: 3,

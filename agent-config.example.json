@@ -80,11 +80,11 @@
   "llm_force_sell_min_confidence": 0.65,
   
   "stale_position_enabled": true,
-  "stale_min_hold_hours": 4,
+  "stale_min_hold_hours": 12,
   "stale_loss_exit_pct": 2,
-  "stale_max_hold_days": 1,
-  "stale_min_gain_pct": 3,
-  "stale_mid_hold_days": 1,
+  "stale_max_hold_days": 3,
+  "stale_min_gain_pct": 5,
+  "stale_mid_hold_days": 2,
   "stale_mid_min_gain_pct": 3,
   "stale_social_volume_decay": 0.3,
 
