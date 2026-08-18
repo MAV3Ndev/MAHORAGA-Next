@@ -358,4 +358,223 @@ describe("crypto trading", () => {
     expect(positionEntries["BTC/USD"]).toBeTruthy();
     expect(positionEntries.BTCUSD).toBe(positionEntries["BTC/USD"]);
   });
+
+  it("blocks blacklisted crypto entries", async () => {
+    const buy = vi.fn(async () => ({ submitted: true }));
+    const cachedResearch: ResearchResult = {
+      symbol: "AVAX/USD",
+      verdict: "BUY",
+      confidence: 0.8,
+      entry_quality: "good",
+      reasoning: "Momentum is constructive.",
+      red_flags: [],
+      catalysts: [],
+      timestamp: Date.now(),
+    };
+    const state: Record<string, unknown> = { "cryptoResearch_AVAX/USD": cachedResearch };
+
+    await runCryptoTrading(
+      {
+        config: {
+          crypto_enabled: true,
+          crypto_symbols: ["BTC/USD", "AVAX/USD"],
+          crypto_blacklist: ["AVAX/USD"],
+          crypto_take_profit_pct: 10,
+          crypto_stop_loss_pct: 5,
+          crypto_btc_min_momentum: 2,
+          crypto_max_consecutive_losses: 2,
+          crypto_reentry_cooldown_hours: 24,
+          min_analyst_confidence: 0.6,
+          position_size_pct_of_cash: 25,
+          risk_per_trade_pct: 0.75,
+          crypto_max_position_value: 5000,
+        },
+        signals: [
+          { symbol: "AVAX/USD", isCrypto: true, sentiment: 0.5, momentum: 5 },
+          { symbol: "BTC/USD", isCrypto: true, sentiment: 0.4, momentum: 3 },
+        ],
+        llm: null,
+        log: () => {},
+        broker: {
+          buy,
+          sell: vi.fn(async () => true),
+          getAccount: vi.fn(async () => ({ buying_power: 10000 })),
+        },
+        state: {
+          get: (key: string) => state[key],
+          set: (key: string, value: unknown) => {
+            state[key] = value;
+          },
+        },
+        positionEntries: {},
+      } as never,
+      []
+    );
+
+    expect(buy).not.toHaveBeenCalled();
+  });
+
+  it("blocks altcoin entries when BTC momentum is weak", async () => {
+    const buy = vi.fn(async () => ({ submitted: true }));
+    const cachedResearch: ResearchResult = {
+      symbol: "ETH/USD",
+      verdict: "BUY",
+      confidence: 0.8,
+      entry_quality: "good",
+      reasoning: "Momentum is constructive.",
+      red_flags: [],
+      catalysts: [],
+      timestamp: Date.now(),
+    };
+    const state: Record<string, unknown> = { "cryptoResearch_ETH/USD": cachedResearch };
+
+    await runCryptoTrading(
+      {
+        config: {
+          crypto_enabled: true,
+          crypto_symbols: ["BTC/USD", "ETH/USD"],
+          crypto_blacklist: [],
+          crypto_take_profit_pct: 10,
+          crypto_stop_loss_pct: 5,
+          crypto_btc_min_momentum: 2,
+          crypto_max_consecutive_losses: 2,
+          crypto_reentry_cooldown_hours: 24,
+          min_analyst_confidence: 0.6,
+          position_size_pct_of_cash: 25,
+          risk_per_trade_pct: 0.75,
+          crypto_max_position_value: 5000,
+        },
+        signals: [
+          { symbol: "ETH/USD", isCrypto: true, sentiment: 0.5, momentum: 4 },
+          { symbol: "BTC/USD", isCrypto: true, sentiment: 0.2, momentum: 1 },
+        ],
+        llm: null,
+        log: () => {},
+        broker: {
+          buy,
+          sell: vi.fn(async () => true),
+          getAccount: vi.fn(async () => ({ buying_power: 10000 })),
+        },
+        state: {
+          get: (key: string) => state[key],
+          set: (key: string, value: unknown) => {
+            state[key] = value;
+          },
+        },
+        positionEntries: {},
+      } as never,
+      []
+    );
+
+    expect(buy).not.toHaveBeenCalled();
+  });
+
+  it("blocks entries during cooldown and after the configured loss streak", async () => {
+    const buy = vi.fn(async () => ({ submitted: true }));
+    const state: Record<string, unknown> = {
+      cryptoReentryCooldowns: { "BTC/USD": Date.now() + 60_000 },
+      cryptoLossStreaks: { "BTC/USD": 2 },
+    };
+
+    await runCryptoTrading(
+      {
+        config: {
+          crypto_enabled: true,
+          crypto_symbols: ["BTC/USD"],
+          crypto_blacklist: [],
+          crypto_take_profit_pct: 10,
+          crypto_stop_loss_pct: 5,
+          crypto_max_consecutive_losses: 2,
+          crypto_reentry_cooldown_hours: 24,
+          min_analyst_confidence: 0.6,
+          position_size_pct_of_cash: 25,
+          risk_per_trade_pct: 0.75,
+          crypto_max_position_value: 5000,
+        },
+        signals: [{ symbol: "BTC/USD", isCrypto: true, sentiment: 0.5, momentum: 4 }],
+        llm: null,
+        log: () => {},
+        broker: {
+          buy,
+          sell: vi.fn(async () => true),
+          getAccount: vi.fn(async () => ({ buying_power: 10000 })),
+        },
+        state: {
+          get: (key: string) => state[key],
+          set: (key: string, value: unknown) => {
+            state[key] = value;
+          },
+        },
+        positionEntries: {},
+      } as never,
+      []
+    );
+
+    expect(buy).not.toHaveBeenCalled();
+  });
+
+  it("applies the trailing stop to crypto positions", async () => {
+    const sell = vi.fn(async () => true);
+    const state: Record<string, unknown> = {
+      cryptoTrailingStates: {
+        "BTC/USD": { active: true, highPrice: 110, stopPrice: 106.15 },
+      },
+    };
+
+    await runCryptoTrading(
+      {
+        config: {
+          crypto_enabled: true,
+          crypto_symbols: ["BTC/USD"],
+          crypto_blacklist: [],
+          crypto_take_profit_pct: 10,
+          crypto_stop_loss_pct: 5,
+          crypto_reentry_cooldown_hours: 24,
+          crypto_max_consecutive_losses: 2,
+          trailing_stop_enabled: true,
+          trailing_stop_pct: 3.5,
+          trailing_stop_activation_pct: 5,
+          dynamic_tp_enabled: false,
+        },
+        signals: [],
+        llm: null,
+        log: () => {},
+        broker: {
+          buy: vi.fn(async () => ({ submitted: true })),
+          sell,
+        },
+        state: {
+          get: (key: string) => state[key],
+          set: (key: string, value: unknown) => {
+            state[key] = value;
+          },
+        },
+        positionEntries: {
+          "BTC/USD": {
+            symbol: "BTC/USD",
+            entry_time: Date.now() - 60_000,
+            entry_price: 100,
+            entry_sentiment: 0.5,
+            entry_social_volume: 1,
+            entry_sources: ["crypto"],
+            entry_reason: "momentum",
+            peak_price: 110,
+            peak_sentiment: 0.5,
+          },
+        },
+      } as never,
+      [
+        {
+          symbol: "BTCUSD",
+          asset_class: "crypto",
+          avg_entry_price: 100,
+          current_price: 104,
+          market_value: 1040,
+          unrealized_pl: 40,
+        },
+      ] as never
+    );
+
+    expect(sell).toHaveBeenCalledWith("BTCUSD", expect.stringContaining("Trailing stop hit"));
+  });
 });

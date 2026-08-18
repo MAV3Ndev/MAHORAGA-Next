@@ -66,6 +66,10 @@ export const AgentConfigSchema = z
     crypto_max_position_value: z.number().positive().max(100000),
     crypto_take_profit_pct: z.number().min(1).max(100),
     crypto_stop_loss_pct: z.number().min(1).max(50),
+    crypto_blacklist: z.array(z.string()),
+    crypto_reentry_cooldown_hours: z.number().min(1).max(168),
+    crypto_max_consecutive_losses: z.number().int().min(1).max(10),
+    crypto_btc_min_momentum: z.number().min(-20).max(20),
 
     twitter_cookies: z.string().trim().max(20000).default(""),
     twitter_cookie_accounts: z.array(CookieAccountSchema).max(20).default([]),
