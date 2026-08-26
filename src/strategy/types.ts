@@ -172,6 +172,12 @@ export interface StrategySignalResearchCandidate {
   quality?: number;
 }
 
+export interface StrategyEntryValidationResult {
+  allowed: boolean;
+  reason?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface BrokerBuyResult {
   submitted: boolean;
   reason?: string;
@@ -265,6 +271,7 @@ export interface Strategy {
       signals: Signal[],
       limit: number
     ) => Promise<StrategySignalResearchCandidate[]> | StrategySignalResearchCandidate[];
+    validateEntryQuality?: (ctx: StrategyContext, research: ResearchResult) => StrategyEntryValidationResult;
   };
 
   /** Optional lifecycle hooks */

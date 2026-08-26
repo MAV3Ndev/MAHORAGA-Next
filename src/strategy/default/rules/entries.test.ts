@@ -16,6 +16,11 @@ function createTestContext(): StrategyContext {
       market_regime_enabled: false,
       portfolio_risk_enabled: false,
       min_analyst_confidence: 0.6,
+      entry_min_evidence_axes: 2,
+      entry_require_catalyst: false,
+      entry_require_trend_confirmation: false,
+      entry_max_price_change_24h_pct: 8,
+      entry_max_price_change_1h_pct: 3,
       position_size_pct_of_cash: 10,
       max_position_value: 5000,
     },
@@ -41,7 +46,20 @@ function createTestContext(): StrategyContext {
       get: <T>(key: string) => state.get(key) as T | undefined,
       set: <T>(key: string, value: T) => void state.set(key, value),
     },
-    signals: [],
+    signals: [
+      {
+        symbol: "NOW",
+        source: "alpha_vantage",
+        source_detail: "market news",
+        sentiment: 0.7,
+        raw_sentiment: 0.6,
+        volume: 20,
+        freshness: 1,
+        source_weight: 0.8,
+        reason: "Bullish",
+        timestamp: Date.now(),
+      },
+    ],
     positionEntries: {},
   };
 }

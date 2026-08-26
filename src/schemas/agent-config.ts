@@ -103,6 +103,11 @@ export const AgentConfigSchema = z
     entry_rsi_max: z.number().min(50).max(90),
     entry_bb_lower_threshold: z.number().min(0).max(1),
     min_signal_quality_score: z.number().min(0).max(1),
+    entry_min_evidence_axes: z.number().int().min(2).max(4),
+    entry_require_catalyst: z.boolean(),
+    entry_require_trend_confirmation: z.boolean(),
+    entry_max_price_change_24h_pct: z.number().min(1).max(50),
+    entry_max_price_change_1h_pct: z.number().min(0.5).max(20),
 
     // ── Composite Scoring ─────────────────────────────────────────────────────
     scoring_enabled: z.boolean(),

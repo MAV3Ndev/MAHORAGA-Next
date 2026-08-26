@@ -29,6 +29,7 @@ import { researchPositionPrompt, researchSignalPrompt } from "./prompts/research
 import { rankSignalCandidates } from "./rules/candidate-score";
 import { runCryptoTrading } from "./rules/crypto-trading";
 import { selectEntries } from "./rules/entries";
+import { evaluateEntryQualityForSymbol } from "./rules/entry-quality";
 import { selectExits } from "./rules/exits";
 import { findBestOptionsContract } from "./rules/options";
 
@@ -87,6 +88,14 @@ export const defaultStrategy: Strategy = {
         score: candidate.score,
         quality: candidate.quality,
       }));
+    },
+    validateEntryQuality(ctx, research) {
+      const result = evaluateEntryQualityForSymbol(ctx, research);
+      return {
+        allowed: result.allowed,
+        reason: result.reason,
+        metadata: { ...result.evidence },
+      };
     },
   },
 };

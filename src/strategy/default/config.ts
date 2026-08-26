@@ -63,7 +63,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
   signal_research_limit: 12,
   entry_candidate_limit: 8,
   take_profit_pct: 10,
-  stop_loss_pct: 5,
+  stop_loss_pct: 4,
   risk_per_trade_pct: 1.25,
   position_size_pct_of_cash: 35,
   equity_entry_cutoff_minutes_before_close: 15,
@@ -122,7 +122,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
 
   // ── Trailing Stop ──────────────────────────────────────────────────────────
   trailing_stop_enabled: true,
-  trailing_stop_pct: 3.5,
+  trailing_stop_pct: 3,
   trailing_stop_activation_pct: 5,
 
   // ── Dynamic Take Profit ────────────────────────────────────────────────────
@@ -134,11 +134,16 @@ export const DEFAULT_CONFIG: AgentConfig = {
 
   // ── Entry Timing Filters ────────────────────────────────────────────────────
   entry_timing_enabled: true,
-  entry_require_technical_data: false,
+  entry_require_technical_data: true,
   entry_rsi_min: 40,
-  entry_rsi_max: 55,
+  entry_rsi_max: 68,
   entry_bb_lower_threshold: 0.2,
-  min_signal_quality_score: 0.35,
+  min_signal_quality_score: 0.5,
+  entry_min_evidence_axes: 3,
+  entry_require_catalyst: true,
+  entry_require_trend_confirmation: true,
+  entry_max_price_change_24h_pct: 8,
+  entry_max_price_change_1h_pct: 3,
 
   // ── Composite Scoring ──────────────────────────────────────────────────────
   scoring_enabled: true,

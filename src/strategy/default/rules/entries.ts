@@ -9,6 +9,7 @@ import { isCryptoSymbol } from "../../../core/asset-symbols";
 import type { Account, Position, ResearchResult } from "../../../core/types";
 import type { BuyCandidate, StrategyContext } from "../../types";
 import { type CandidateScore, calculateCandidateScores } from "./candidate-score";
+import { evaluateEntryQualityForSymbol } from "./entry-quality";
 import { checkEntryTiming, type TechnicalData } from "./entry-timing";
 import { analyzeMarketRegime, type MarketRegimeData } from "./market-regime";
 import { checkPortfolioRisk } from "./portfolio-risk";
@@ -47,11 +48,24 @@ export function selectEntries(
   const promotableWaits = stockResearch.filter((r) => isPromotableWait(r, ctx));
   const entryResearch = [...buyResearch, ...promotableWaits];
 
+  const marketContextFiltered = entryResearch.filter((result) => {
+    const quality = evaluateEntryQualityForSymbol(ctx, result);
+    if (!quality.allowed) {
+      ctx.log("Entries", "quality_filtered", {
+        symbol: result.symbol,
+        reason: quality.reason,
+        ...quality.evidence,
+      });
+      return false;
+    }
+    return true;
+  });
+
   const candidateScoreMap: Record<string, CandidateScore> = {};
 
   if (ctx.config.scoring_enabled) {
     const momentumData = buildMomentumData(ctx.signals, ctx);
-    const candidateScores = calculateCandidateScores(entryResearch, ctx.signals, momentumData, {
+    const candidateScores = calculateCandidateScores(marketContextFiltered, ctx.signals, momentumData, {
       research: ctx.config.scoring_technical_weight + ctx.config.scoring_catalyst_weight,
       sentiment: ctx.config.scoring_sentiment_weight,
       signalQuality: 0.2,
@@ -69,7 +83,7 @@ export function selectEntries(
   }
 
   // Filter and sort by composite score (or original confidence if scoring disabled)
-  const aboveConfidence = entryResearch.filter((r) => {
+  const aboveConfidence = marketContextFiltered.filter((r) => {
     const candidateScore = candidateScoreMap[r.symbol];
     if (candidateScore && candidateScore.quality > 0 && candidateScore.quality < ctx.config.min_signal_quality_score) {
       return false;

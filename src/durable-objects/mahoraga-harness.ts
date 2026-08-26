@@ -1984,6 +1984,25 @@ export class MahoragaHarness extends DurableObject<Env> {
           continue;
         }
 
+        const entryQuality = activeStrategy.capabilities?.validateEntryQuality?.(
+          ctx,
+          this.state.signalResearch[rec.symbol]!
+        );
+        if (entryQuality && !entryQuality.allowed) {
+          this.log("Analyst", "llm_buy_blocked_quality", { symbol: rec.symbol, reason: entryQuality.reason });
+          await this.recordTradeDecision({
+            source: "analyst_recommendation",
+            symbol: rec.symbol,
+            action: "BUY",
+            status: "blocked",
+            confidence: rec.confidence,
+            reason: rec.reasoning,
+            metadata: { reason: entryQuality.reason, ...(entryQuality.metadata ?? {}) },
+            snapshot: this.buildTradeDecisionSnapshot(rec.symbol, { account, positions, recommendation: rec }),
+          });
+          continue;
+        }
+
         const notional = computeAnalystRecommendationNotional({
           buyingPower: account.buying_power,
           basePositionSizePct: this.state.config.position_size_pct_of_cash,
@@ -2160,6 +2179,24 @@ export class MahoragaHarness extends DurableObject<Env> {
             confidence: rec.confidence,
             reason: rec.reasoning,
             metadata: { reason: guard.reason, ...(guard.metadata ?? {}) },
+            snapshot: this.buildTradeDecisionSnapshot(rec.symbol, { account, positions, recommendation: rec }),
+          });
+          continue;
+        }
+
+        const entryQuality = activeStrategy.capabilities?.validateEntryQuality?.(
+          ctx,
+          this.state.signalResearch[rec.symbol]!
+        );
+        if (entryQuality && !entryQuality.allowed) {
+          await this.recordTradeDecision({
+            source: "premarket_plan",
+            symbol: rec.symbol,
+            action: "BUY",
+            status: "blocked",
+            confidence: rec.confidence,
+            reason: rec.reasoning,
+            metadata: { reason: entryQuality.reason, ...(entryQuality.metadata ?? {}) },
             snapshot: this.buildTradeDecisionSnapshot(rec.symbol, { account, positions, recommendation: rec }),
           });
           continue;
