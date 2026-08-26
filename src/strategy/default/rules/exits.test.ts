@@ -207,4 +207,69 @@ describe("exit rules", () => {
       },
     ]);
   });
+
+  it("does not treat a missing social snapshot as zero volume", () => {
+    const stateStore = new Map<string, unknown>();
+    const ctx = {
+      config: {
+        options_enabled: false,
+        trailing_stop_enabled: false,
+        trailing_stop_pct: 3,
+        trailing_stop_activation_pct: 5,
+        dynamic_tp_enabled: false,
+        tp_atr_multiplier: 3,
+        tp_min_pct: 5,
+        tp_max_pct: 25,
+        take_profit_pct: 10,
+        stop_loss_pct: 4,
+        stale_position_enabled: true,
+        stale_min_hold_hours: 12,
+        stale_max_hold_days: 3,
+        stale_min_gain_pct: 5,
+        stale_mid_hold_days: 2,
+        stale_mid_min_gain_pct: 3,
+        stale_social_volume_decay: 0.3,
+        crypto_symbols: [],
+      },
+      positionEntries: {
+        NVDA: {
+          symbol: "NVDA",
+          entry_time: Date.now() - 2.1 * 24 * 60 * 60 * 1000,
+          entry_price: 100,
+          entry_sentiment: 0.7,
+          entry_social_volume: 100,
+          entry_sources: ["stocktwits", "alpha_vantage_news"],
+          entry_reason: "confirmed trend",
+          peak_price: 103,
+          peak_sentiment: 0.7,
+        } satisfies PositionEntry,
+      },
+      state: {
+        get<T>(key: string): T | undefined {
+          return stateStore.get(key) as T | undefined;
+        },
+        set<T>(key: string, value: T): void {
+          stateStore.set(key, value);
+        },
+      },
+    } as never;
+
+    const exits = selectExits(
+      ctx,
+      [
+        {
+          symbol: "NVDA",
+          asset_class: "us_equity",
+          avg_entry_price: 100,
+          current_price: 101,
+          market_value: 1010,
+          unrealized_pl: 10,
+        },
+      ] as never,
+      {} as never
+    );
+
+    expect(exits).toEqual([]);
+    expect((stateStore.get("stalenessAnalysis") as Record<string, { reason: string }>).NVDA?.reason).toContain("OK");
+  });
 });

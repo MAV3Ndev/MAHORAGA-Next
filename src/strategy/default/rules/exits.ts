@@ -129,7 +129,7 @@ export function selectExits(ctx: StrategyContext, positions: Position[], _accoun
     if (ctx.config.stale_position_enabled) {
       // Get current social volume from strategy state
       const socialSnapshot = ctx.state.get<Record<string, { volume: number }>>("socialSnapshotCache") ?? {};
-      const currentSocialVolume = getSnapshotValue(pos.symbol, socialSnapshot, ctx)?.volume ?? 0;
+      const currentSocialVolume = getSnapshotValue(pos.symbol, socialSnapshot, ctx)?.volume ?? null;
 
       const stalenessResult = analyzeStaleness(pos.symbol, pos.current_price, currentSocialVolume, entry, ctx.config);
 
