@@ -361,9 +361,7 @@ export async function runCryptoTrading(ctx: StrategyContext, positions: Position
 
     const shouldTakeProfit = plPct >= ctx.config.crypto_take_profit_pct && !advancedExit.shouldExit;
     if (advancedExit.shouldExit || shouldTakeProfit) {
-      const reason = advancedExit.shouldExit
-        ? advancedExit.reason
-        : `Crypto take profit at +${plPct.toFixed(1)}%`;
+      const reason = advancedExit.shouldExit ? advancedExit.reason : `Crypto take profit at +${plPct.toFixed(1)}%`;
       ctx.log("Crypto", advancedExit.shouldExit ? (advancedExit.exitType ?? "exit") : "take_profit", {
         symbol: pos.symbol,
         pnl: plPct.toFixed(2),
