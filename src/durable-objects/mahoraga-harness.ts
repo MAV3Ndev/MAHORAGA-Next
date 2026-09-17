@@ -22,6 +22,7 @@ import {
   buildMarketSessionState,
   POSITION_RESEARCH_INTERVAL_MS,
   SIGNAL_RESEARCH_INTERVAL_MS,
+  SIGNAL_RESEARCH_PREMARKET_MINUTES,
   shouldClearPremarketPlan,
   shouldCreatePremarketPlan,
   shouldExecutePremarketPlan,
@@ -78,6 +79,7 @@ import type { AgentConfig } from "../schemas/agent-config";
 import { safeValidateAgentConfig } from "../schemas/agent-config";
 import { createD1Client } from "../storage/d1/client";
 import { getTradeDecisionStats, insertTradeDecision, queryTradeDecisions } from "../storage/d1/queries/trade-decisions";
+import { createTrade } from "../storage/d1/queries/trades";
 import { createR2Client } from "../storage/r2/client";
 import { R2Paths } from "../storage/r2/paths";
 import { activeStrategy } from "../strategy";
@@ -135,7 +137,7 @@ export class MahoragaHarness extends DurableObject<Env> {
   private readonly MARKET_CONTEXT_TTL_MS = 10 * 60 * 1000;
   private readonly MAX_MARKET_CONTEXT_SYMBOLS = 24;
   private readonly TRANSIENT_RESEARCH_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-  private readonly SIGNAL_RESEARCH_CACHE_TTL_MS = 180_000;
+  private readonly SIGNAL_RESEARCH_CACHE_TTL_MS = 15 * 60 * 1000;
   private readonly SIGNAL_RESEARCH_FAILURE_COOLDOWN_MS = 5 * 60 * 1000;
   private readonly VOLATILE_CACHE_MAX_AGE_MS = 30 * 60 * 1000;
   private readonly TWITTER_CONFIRMATION_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -361,10 +363,33 @@ export class MahoragaHarness extends DurableObject<Env> {
       afterHoursExitLimitBufferPct: self.state.config.after_hours_exit_limit_buffer_pct,
       defaultStopLossPct: self.state.config.stop_loss_pct,
       onBuy: async (trade) => {
+        await createTrade(db, {
+          alpaca_order_id: trade.orderId,
+          symbol: trade.symbol,
+          side: "buy",
+          qty: trade.qty ?? trade.filledQty,
+          notional: trade.notional,
+          order_type: trade.orderType,
+          limit_price: trade.limitPrice,
+          status: trade.status,
+          filled_qty: trade.filledQty,
+          filled_avg_price: trade.filledAvgPrice,
+        }).catch((error) => self.log("System", "trade_record_failed", { error: String(error) }));
         await activeStrategy.hooks?.onBuy?.(strategyContext, trade.symbol, trade.notional);
         await self.sendDiscordTradeNotification("BUY", trade);
       },
       onSell: async (trade) => {
+        await createTrade(db, {
+          alpaca_order_id: trade.orderId,
+          symbol: trade.symbol,
+          side: "sell",
+          qty: trade.qty ?? trade.filledQty,
+          order_type: trade.orderType,
+          limit_price: trade.limitPrice,
+          status: trade.status,
+          filled_qty: trade.filledQty,
+          filled_avg_price: trade.filledAvgPrice,
+        }).catch((error) => self.log("System", "trade_record_failed", { error: String(error) }));
         self.clearTrackedSymbolState(trade.symbol);
         await activeStrategy.hooks?.onSell?.(strategyContext, trade.symbol, trade.reason);
         await self.sendDiscordTradeNotification("SELL", trade);
@@ -451,8 +476,14 @@ export class MahoragaHarness extends DurableObject<Env> {
         console.log("[Alarm] Data gatherers complete");
       }
 
-      // Signal research
-      if (shouldRunInterval(now, this.state.lastResearchRun, SIGNAL_RESEARCH_INTERVAL_MS)) {
+      // Signal research — market hours only, plus a pre-open warm-up window so
+      // the premarket plan and open execution have fresh research available
+      const minutesToNextOpen =
+        !clock.is_open && session.nextOpenValid
+          ? (session.nextOpenMs - clockNowMs) / 60_000
+          : Number.POSITIVE_INFINITY;
+      const signalResearchWindowOpen = clock.is_open || minutesToNextOpen <= SIGNAL_RESEARCH_PREMARKET_MINUTES;
+      if (signalResearchWindowOpen && shouldRunInterval(now, this.state.lastResearchRun, SIGNAL_RESEARCH_INTERVAL_MS)) {
         console.log("[Alarm] Starting signal research");
         await this.researchTopSignals(ctx, this.state.config.signal_research_limit ?? 5);
         console.log("[Alarm] Signal research complete");
@@ -1246,9 +1277,26 @@ export class MahoragaHarness extends DurableObject<Env> {
             return;
           }
 
+          // IEX is available on the basic Alpaca data plan; fall back to the
+          // default feed for accounts that have SIP access. Without this
+          // fallback a feed error silently leaves only the current price and
+          // makes every entry look technically unconfirmed.
+          const getStockBars = async (timeframe: string, limit: number, lookbackDays: number) => {
+            const end = new Date();
+            const start = new Date(end.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
+            for (const params of [
+              { limit, start: start.toISOString(), end: end.toISOString(), feed: "iex" as const },
+              { limit, start: start.toISOString(), end: end.toISOString() },
+            ]) {
+              const bars = await alpaca.marketData.getBars(symbol, timeframe, params).catch(() => []);
+              if (bars.length >= Math.min(limit, timeframe === "1Day" ? 50 : 2)) return bars;
+            }
+            return [];
+          };
+
           const [dailyBars, hourlyBars, snapshot] = await Promise.all([
-            alpaca.marketData.getBars(symbol, "1Day", { limit: 250 }).catch(() => []),
-            alpaca.marketData.getBars(symbol, "1Hour", { limit: 30 }).catch(() => []),
+            getStockBars("1Day", 250, 400),
+            getStockBars("1Hour", 30, 10),
             alpaca.marketData.getSnapshot(symbol).catch(() => null),
           ]);
 
@@ -1260,6 +1308,14 @@ export class MahoragaHarness extends DurableObject<Env> {
           }
 
           const technicals = dailyBars.length > 0 ? computeTechnicals(symbol, dailyBars) : null;
+          if (dailyBars.length < 50) {
+            ctx.log("System", "market_context_insufficient_bars", {
+              symbol,
+              daily_bars: dailyBars.length,
+              hourly_bars: hourlyBars.length,
+              required_daily_bars: 50,
+            });
+          }
           const currentPrice =
             snapshot?.latest_trade?.price ||
             snapshot?.latest_quote?.ask_price ||
@@ -1299,7 +1355,10 @@ export class MahoragaHarness extends DurableObject<Env> {
           } else {
             nextTechnicalCache[symbol] = {
               ...(techEntry ?? {}),
-              updated_at: now,
+              // Do not mark an incomplete technical snapshot as fresh. A
+              // price-only cache would otherwise suppress retries until the
+              // TTL expires and permanently starve RSI/SMA features.
+              updated_at: 0,
               current_price: currentPrice,
             };
           }
@@ -1474,11 +1533,17 @@ export class MahoragaHarness extends DurableObject<Env> {
         price = snapshot?.latest_trade?.price || snapshot?.latest_quote?.ask_price || 0;
       }
 
+      const dynamicState = this.state as unknown as Record<string, unknown>;
+      const technical = (dynamicState.technicalDataCache as Record<string, TechnicalDataCacheEntry> | undefined)?.[symbol];
+      const momentum = (dynamicState.momentumDataCache as Record<string, MomentumDataCacheEntry> | undefined)?.[symbol];
+      const social = this.getSocialSnapshotEntry(getSocialSnapshotCache(this.state), symbol);
+      price ||= technical?.current_price ?? 0;
+
       const prompt = activeStrategy.prompts.researchSignal(symbol, sentiment, sources, signals, price, ctx);
       const { analysis: result } = await this.createResearchService().completePromptJson<ResearchResult>({
         prompt,
         logAgent: "SignalResearch",
-        defaultMaxTokens: 250,
+        defaultMaxTokens: 512,
         temperature: 0.3,
         validate: (analysis) =>
           normalizeResearchAnalysis(symbol, analysis as Parameters<typeof normalizeResearchAnalysis>[1], { sentiment }),
@@ -1503,6 +1568,25 @@ export class MahoragaHarness extends DurableObject<Env> {
         reason: result.reasoning,
         price,
         metadata: {
+          decision_price: price,
+          technicals: technical
+            ? {
+                rsi: technical.rsi,
+                sma_20: technical.sma_20,
+                sma_50: technical.sma_50,
+                relative_volume: technical.relative_volume,
+              }
+            : null,
+          momentum: momentum
+            ? {
+                price_change_1h: momentum.price_change_1h,
+                price_change_24h: momentum.price_change_24h,
+                volume_change: momentum.volume_change,
+              }
+            : null,
+          social: social
+            ? { volume: social.volume, sentiment: social.sentiment, sources: social.sources }
+            : null,
           entry_quality: result.entry_quality,
           red_flags: result.red_flags,
           catalysts: result.catalysts,
@@ -1595,7 +1679,7 @@ export class MahoragaHarness extends DurableObject<Env> {
       }>({
         prompt,
         logAgent: "Analyst",
-        defaultMaxTokens: 800,
+        defaultMaxTokens: 1600,
         temperature: 0.4,
       });
 
@@ -1962,6 +2046,7 @@ export class MahoragaHarness extends DurableObject<Env> {
 
         const guard = evaluateAnalystBuyGuard({
           research: this.state.signalResearch[rec.symbol] ?? null,
+          allowWaitResearch: true,
           momentum: momentumCache?.[rec.symbol] ?? null,
           cooldownUntil: this.getAnalystBuyCooldown(rec.symbol),
           now: Date.now(),
@@ -2037,6 +2122,12 @@ export class MahoragaHarness extends DurableObject<Env> {
         });
 
         const result = await ctx.broker.buy(rec.symbol, notional, rec.reasoning);
+        this.log("Analyst", "llm_buy_result", {
+          symbol: rec.symbol,
+          notional: Number(notional.toFixed(2)),
+          submitted: result.submitted,
+          ...(result.submitted ? {} : { reason: result.reason, ...(result.metadata ?? {}) }),
+        });
         await this.recordTradeDecision({
           source: "analyst_recommendation",
           symbol: rec.symbol,
@@ -2163,6 +2254,7 @@ export class MahoragaHarness extends DurableObject<Env> {
 
         const guard = evaluateAnalystBuyGuard({
           research: this.state.signalResearch[rec.symbol] ?? null,
+          allowWaitResearch: true,
           momentum: momentumCache?.[rec.symbol] ?? null,
           cooldownUntil: this.getAnalystBuyCooldown(rec.symbol),
           now: Date.now(),

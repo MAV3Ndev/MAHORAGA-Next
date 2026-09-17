@@ -2,7 +2,7 @@
  * Analyst prompt builder — batch signal analysis for trading decisions.
  */
 
-import type { Account, Position, Signal } from "../../../core/types";
+import type { Account, Position, ResearchResult, Signal } from "../../../core/types";
 import type { AnalyzeSignalsPromptBuilder, PromptTemplate, StrategyContext } from "../../types";
 import { getCryptoSymbolAliases, isCryptoSymbol } from "../helpers/crypto";
 
@@ -39,6 +39,13 @@ export const analyzeSignalsPrompt: AnalyzeSignalsPromptBuilder = (
     )
   );
 
+  const researchMap = ctx.state.get<Record<string, ResearchResult>>("signalResearch") ?? {};
+  const researchLines = candidates.map((c) => {
+    const research = researchMap[c.symbol];
+    if (!research) return `- ${c.symbol}: NO RESEARCH (BUY will be rejected — research required)`;
+    return `- ${c.symbol}: ${research.verdict} (confidence ${research.confidence.toFixed(2)}, entry quality ${research.entry_quality}) — ${research.reasoning.slice(0, 160)}`;
+  });
+
   const user = `Current Time: ${new Date().toISOString()}
 
 ACCOUNT STATUS:
@@ -69,6 +76,9 @@ ${candidates
   )
   .join("\n")}
 
+SIGNAL RESEARCH VERDICTS (from the per-symbol research stage):
+${researchLines.join("\n")}
+
 RAW SIGNALS (top 20):
 ${signals
   .slice(0, 20)
@@ -89,6 +99,7 @@ Analyze and provide BUY/SELL/HOLD recommendations:`;
 
 Rules:
 - Only recommend BUY for symbols with strong conviction from multiple data points
+- Do NOT recommend BUY for symbols whose research verdict is SKIP or missing — those orders are rejected automatically by the entry guard
 - Recommend SELL only for positions that have been held long enough AND show deteriorating sentiment or major red flags
 - Give positions time to develop - avoid selling too early just because gains are small
 - Positions held less than 1-2 hours should generally be given more time unless hitting stop loss
@@ -105,7 +116,7 @@ Response format:
 }`,
     user,
     model: ctx.config.llm_analyst_model,
-    maxTokens: 800,
+    maxTokens: 1600,
   };
 };
 

@@ -58,12 +58,13 @@ function createDeps(overrides?: {
       ...overrides?.position,
     })),
     createOrder: vi.fn(async (params) => ({
+      id: "order-test-1",
       status: "accepted",
       order_type: params.type,
       type: params.type,
       ...params,
     })),
-    closePosition: vi.fn(async () => ({ status: "accepted" })),
+    closePosition: vi.fn(async () => ({ id: "order-close-1", status: "accepted" })),
     listOrders: vi.fn(async () => overrides?.openOrders ?? []),
     cancelOrder: vi.fn(async () => {}),
     getAsset: vi.fn(async () => ({ exchange: "NASDAQ" })),
@@ -205,7 +206,7 @@ describe("createPolicyBroker", () => {
 
     expect(result).toEqual({
       submitted: true,
-      metadata: { order_status: "accepted", order_type: "market", notional: 1000 },
+      metadata: { order_id: "order-test-1", order_status: "accepted", order_type: "market", notional: 1000 },
     });
     expect(trading.createOrder).toHaveBeenCalledWith({
       symbol: "BTC/USD",
@@ -229,6 +230,7 @@ describe("createPolicyBroker", () => {
       isCrypto: true,
       status: "accepted",
       orderType: "market",
+      orderId: "order-test-1",
     });
   });
 
@@ -313,6 +315,8 @@ describe("createPolicyBroker", () => {
       reason: "After-hours stop loss",
       status: "accepted",
       orderType: "limit",
+      orderId: "order-test-1",
+      qty: 10,
       extendedHours: true,
       limitPrice: 6.78,
     });
@@ -377,6 +381,7 @@ describe("createPolicyBroker", () => {
       reason: "Regular-hours exit",
       status: "accepted",
       orderType: "market",
+      orderId: "order-close-1",
     });
   });
 

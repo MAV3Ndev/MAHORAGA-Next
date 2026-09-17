@@ -49,16 +49,30 @@ describe("evaluateEntryQuality", () => {
     expect(result.evidence.evidenceAxes).toBe(4);
   });
 
-  it("rejects social-only candidates", () => {
+  it("rejects social-only candidates when market evidence is required", () => {
     const result = evaluateEntryQuality(
       { ...research, catalysts: [] },
       [signal("stocktwits")],
       { current_price: 210 },
       undefined,
-      DEFAULT_CONFIG
+      { ...DEFAULT_CONFIG, entry_require_market_evidence: true }
     );
 
     expect(result).toMatchObject({ allowed: false, reason: "social_only" });
+  });
+
+  it("accepts social-only candidates when other evidence axes are satisfied", () => {
+    const result = evaluateEntryQuality(
+      research,
+      [signal("stocktwits")],
+      technical,
+      momentum,
+      DEFAULT_CONFIG
+    );
+
+    expect(result.allowed).toBe(true);
+    expect(result.evidence.marketEvidenceSourceCount).toBe(0);
+    expect(result.evidence.evidenceAxes).toBe(3);
   });
 
   it("rejects candidates without a concrete catalyst", () => {

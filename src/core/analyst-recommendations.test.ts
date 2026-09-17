@@ -77,6 +77,40 @@ describe("analyst recommendation helpers", () => {
     ).toMatchObject({ allowed: false, reason: "signal_research_not_buy" });
   });
 
+  it("allows an analyst BUY to proceed when research is still WAIT", () => {
+    expect(
+      evaluateAnalystBuyGuard({
+        research: {
+          verdict: "WAIT",
+          entry_quality: "good",
+          timestamp: 1_000,
+        },
+        allowWaitResearch: true,
+        now: 1_100,
+        maxResearchAgeMs: 15 * 60 * 1000,
+        maxAbsPriceChange24hPct: 30,
+        maxAbsPriceChange1hPct: 15,
+      })
+    ).toMatchObject({ allowed: true });
+  });
+
+  it("still blocks SKIP research even when WAIT overrides are enabled", () => {
+    expect(
+      evaluateAnalystBuyGuard({
+        research: {
+          verdict: "SKIP",
+          entry_quality: "good",
+          timestamp: 1_000,
+        },
+        allowWaitResearch: true,
+        now: 1_100,
+        maxResearchAgeMs: 15 * 60 * 1000,
+        maxAbsPriceChange24hPct: 30,
+        maxAbsPriceChange1hPct: 15,
+      })
+    ).toMatchObject({ allowed: false, reason: "signal_research_not_buy" });
+  });
+
   it("blocks analyst buys after extreme price moves", () => {
     expect(
       evaluateAnalystBuyGuard({

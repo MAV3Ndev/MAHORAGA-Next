@@ -37,6 +37,7 @@ export function shouldBypassLlmMinHold(params: {
 
 export function evaluateAnalystBuyGuard(params: {
   research?: AnalystBuyGuardResearch | null;
+  allowWaitResearch?: boolean;
   momentum?: AnalystBuyGuardMomentum | null;
   cooldownUntil?: number | null;
   now: number;
@@ -44,8 +45,16 @@ export function evaluateAnalystBuyGuard(params: {
   maxAbsPriceChange24hPct: number;
   maxAbsPriceChange1hPct: number;
 }): AnalystBuyGuardResult {
-  const { research, momentum, cooldownUntil, now, maxResearchAgeMs, maxAbsPriceChange24hPct, maxAbsPriceChange1hPct } =
-    params;
+  const {
+    research,
+    allowWaitResearch = false,
+    momentum,
+    cooldownUntil,
+    now,
+    maxResearchAgeMs,
+    maxAbsPriceChange24hPct,
+    maxAbsPriceChange1hPct,
+  } = params;
 
   if (cooldownUntil && cooldownUntil > now) {
     return {
@@ -68,7 +77,7 @@ export function evaluateAnalystBuyGuard(params: {
     };
   }
 
-  if (research.verdict !== "BUY") {
+  if (research.verdict !== "BUY" && !(allowWaitResearch && research.verdict === "WAIT")) {
     return {
       allowed: false,
       reason: "signal_research_not_buy",

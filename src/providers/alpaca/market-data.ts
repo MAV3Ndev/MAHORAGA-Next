@@ -49,6 +49,10 @@ interface AlpacaSnapshot {
   prevDailyBar: AlpacaBar;
 }
 
+interface AlpacaCryptoSnapshotsResponse {
+  [symbol: string]: AlpacaSnapshot;
+}
+
 function parseBar(raw: AlpacaBar): Bar {
   return {
     t: raw.t,
@@ -92,63 +96,59 @@ export class AlpacaMarketDataProvider implements MarketDataProvider {
   constructor(private client: AlpacaClient) {}
 
   async getBars(symbol: string, timeframe: string, params?: BarsParams): Promise<Bar[]> {
-    const response = await this.client.dataRequest<AlpacaBarsResponse | { bars: AlpacaBar[] }>(
-      "GET",
-      `/v2/stocks/${encodeURIComponent(symbol)}/bars`,
-      {
-        timeframe,
-        start: params?.start,
-        end: params?.end,
-        limit: params?.limit,
-        adjustment: params?.adjustment,
-        feed: params?.feed,
-      }
-    );
+    const requestedLimit = params?.limit ?? 1000;
+    const collected: Bar[] = [];
+    let pageToken = params?.page_token;
 
-    if (!response || !response.bars) {
-      return [];
-    }
-
-    if (Array.isArray(response.bars)) {
-      return response.bars.map(parseBar);
-    }
-
-    const bars = (response as AlpacaBarsResponse).bars[symbol];
-    return bars ? bars.map(parseBar) : [];
-  }
-
-  async getCryptoBars(symbol: string, timeframe: string, params?: BarsParams): Promise<Bar[]> {
-    const response = await this.client.dataRequest<AlpacaBarsResponse | { bars: AlpacaBar[] }>(
-      "GET",
-      "/v1beta3/crypto/us/bars",
-      {
+    for (let page = 0; page < 10 && collected.length < requestedLimit; page += 1) {
+      const response = await this.client.dataRequest<AlpacaBarsResponse>("GET", "/v2/stocks/bars", {
         symbols: symbol,
         timeframe,
         start: params?.start,
         end: params?.end,
-        limit: params?.limit,
-      }
-    );
+        limit: Math.min(requestedLimit - collected.length, 10_000),
+        adjustment: params?.adjustment,
+        feed: params?.feed,
+        page_token: pageToken,
+      });
 
-    if (!response || !response.bars) {
-      return [];
+      if (!response?.bars) break;
+      const bars = response.bars[symbol] ?? response.bars[symbol.toUpperCase()] ?? [];
+      collected.push(...bars.map(parseBar));
+      if (!response.next_page_token || bars.length === 0) break;
+      pageToken = response.next_page_token;
     }
 
-    if (Array.isArray(response.bars)) {
-      return response.bars.map(parseBar);
-    }
+    return collected.slice(0, requestedLimit);
+  }
 
-    const bars = (response as AlpacaBarsResponse).bars[symbol];
-    return bars ? bars.map(parseBar) : [];
+  async getCryptoBars(symbol: string, timeframe: string, params?: BarsParams): Promise<Bar[]> {
+    const requestedLimit = params?.limit ?? 1000;
+    const collected: Bar[] = [];
+    let pageToken = params?.page_token;
+    for (let page = 0; page < 10 && collected.length < requestedLimit; page += 1) {
+      const response = await this.client.dataRequest<AlpacaBarsResponse>("GET", "/v1beta3/crypto/us/bars", {
+        symbols: symbol,
+        timeframe,
+        start: params?.start,
+        end: params?.end,
+        limit: Math.min(requestedLimit - collected.length, 10_000),
+        page_token: pageToken,
+      });
+      const bars = response?.bars?.[symbol] ?? response?.bars?.[symbol.toUpperCase()] ?? [];
+      collected.push(...bars.map(parseBar));
+      if (!response?.next_page_token || bars.length === 0) break;
+      pageToken = response.next_page_token;
+    }
+    return collected.slice(0, requestedLimit);
   }
 
   async getLatestBar(symbol: string): Promise<Bar> {
-    const response = await this.client.dataRequest<AlpacaLatestBarsResponse>(
-      "GET",
-      `/v2/stocks/${encodeURIComponent(symbol)}/bars/latest`
-    );
+    const response = await this.client.dataRequest<AlpacaLatestBarsResponse>("GET", "/v2/stocks/bars/latest", {
+      symbols: symbol,
+    });
 
-    const bar = response.bars[symbol];
+    const bar = response.bars[symbol] ?? response.bars[symbol.toUpperCase()];
     if (!bar) {
       throw new Error(`No bar data for ${symbol}`);
     }
@@ -168,12 +168,11 @@ export class AlpacaMarketDataProvider implements MarketDataProvider {
   }
 
   async getQuote(symbol: string): Promise<Quote> {
-    const response = await this.client.dataRequest<AlpacaQuotesResponse>(
-      "GET",
-      `/v2/stocks/${encodeURIComponent(symbol)}/quotes/latest`
-    );
+    const response = await this.client.dataRequest<AlpacaQuotesResponse>("GET", "/v2/stocks/quotes/latest", {
+      symbols: symbol,
+    });
 
-    const quote = response.quotes[symbol];
+    const quote = response.quotes[symbol] ?? response.quotes[symbol.toUpperCase()];
     if (!quote) {
       throw new Error(`No quote data for ${symbol}`);
     }
@@ -193,20 +192,15 @@ export class AlpacaMarketDataProvider implements MarketDataProvider {
   }
 
   async getSnapshot(symbol: string): Promise<Snapshot> {
-    const response = await this.client.dataRequest<AlpacaSnapshotsResponse | AlpacaSnapshot>(
-      "GET",
-      `/v2/stocks/${encodeURIComponent(symbol)}/snapshot`
-    );
+    const response = await this.client.dataRequest<AlpacaSnapshotsResponse>("GET", "/v2/stocks/snapshots", {
+      symbols: symbol,
+    });
 
     if (!response) {
       throw new Error(`No snapshot data for ${symbol} (market may be closed)`);
     }
 
-    if ("latestTrade" in response) {
-      return parseSnapshot(symbol, response as AlpacaSnapshot);
-    }
-
-    const snapshot = (response as AlpacaSnapshotsResponse)[symbol];
+    const snapshot = response[symbol] ?? response[symbol.toUpperCase()];
     if (!snapshot) {
       throw new Error(`No snapshot data for ${symbol} (market may be closed)`);
     }
@@ -214,13 +208,13 @@ export class AlpacaMarketDataProvider implements MarketDataProvider {
   }
 
   async getCryptoSnapshot(symbol: string): Promise<Snapshot> {
-    const response = await this.client.dataRequest<{ snapshots: AlpacaSnapshotsResponse }>(
+    const response = await this.client.dataRequest<AlpacaCryptoSnapshotsResponse>(
       "GET",
       "/v1beta3/crypto/us/snapshots",
       { symbols: symbol }
     );
 
-    const snapshot = response.snapshots?.[symbol as keyof typeof response.snapshots];
+    const snapshot = response?.[symbol] ?? response?.[symbol.toUpperCase()];
     if (!snapshot) {
       throw new Error(`No crypto snapshot data for ${symbol}`);
     }

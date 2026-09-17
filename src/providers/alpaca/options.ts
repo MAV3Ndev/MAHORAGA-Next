@@ -31,27 +31,23 @@ interface AlpacaOptionsContractsResponse {
 }
 
 interface AlpacaOptionQuote {
-  symbol: string;
-  bid_price: number;
-  bid_size: number;
-  ask_price: number;
-  ask_size: number;
-  bid_exchange: string;
-  ask_exchange: string;
-  timestamp: string;
+  ap: number;
+  as: number;
+  bp: number;
+  bs: number;
+  t: string;
 }
 
 interface AlpacaOptionTrade {
-  symbol: string;
-  price: number;
-  size: number;
-  exchange: string;
-  timestamp: string;
+  p: number;
+  s: number;
+  t: string;
+  x: string;
 }
 
 interface AlpacaOptionSnapshot {
-  latest_quote: AlpacaOptionQuote;
-  latest_trade: AlpacaOptionTrade;
+  latestQuote?: AlpacaOptionQuote;
+  latestTrade?: AlpacaOptionTrade;
   greeks?: {
     delta: number;
     gamma: number;
@@ -59,11 +55,12 @@ interface AlpacaOptionSnapshot {
     vega: number;
     rho: number;
   };
-  implied_volatility?: number;
+  impliedVolatility?: number;
 }
 
 interface AlpacaOptionSnapshotsResponse {
   snapshots: Record<string, AlpacaOptionSnapshot>;
+  next_page_token?: string | null;
 }
 
 // ============================================================================
@@ -105,13 +102,13 @@ function parseOptionSnapshot(symbol: string, raw: AlpacaOptionSnapshot): OptionS
   return {
     symbol,
     latest_quote: {
-      bid_price: raw.latest_quote?.bid_price || 0,
-      bid_size: raw.latest_quote?.bid_size || 0,
-      ask_price: raw.latest_quote?.ask_price || 0,
-      ask_size: raw.latest_quote?.ask_size || 0,
+      bid_price: raw.latestQuote?.bp || 0,
+      bid_size: raw.latestQuote?.bs || 0,
+      ask_price: raw.latestQuote?.ap || 0,
+      ask_size: raw.latestQuote?.as || 0,
     },
     greeks: raw.greeks,
-    implied_volatility: raw.implied_volatility,
+    implied_volatility: raw.impliedVolatility,
   };
 }
 
@@ -232,15 +229,19 @@ export class AlpacaOptionsProvider implements OptionsProvider {
       return {};
     }
 
-    const symbols = contractSymbols.join(",");
-    const response = await this.client.dataRequest<AlpacaOptionSnapshotsResponse>(
-      "GET",
-      `/v1beta1/options/snapshots?symbols=${encodeURIComponent(symbols)}`
-    );
-
     const result: Record<string, OptionSnapshot> = {};
-    for (const [symbol, snapshot] of Object.entries(response.snapshots || {})) {
-      result[symbol] = parseOptionSnapshot(symbol, snapshot);
+    const symbols = contractSymbols.join(",");
+    let pageToken: string | undefined;
+    for (let page = 0; page < 10; page += 1) {
+      const response = await this.client.dataRequest<AlpacaOptionSnapshotsResponse>("GET", "/v1beta1/options/snapshots", {
+        symbols,
+        page_token: pageToken,
+      });
+      for (const [symbol, snapshot] of Object.entries(response?.snapshots || {})) {
+        result[symbol] = parseOptionSnapshot(symbol, snapshot);
+      }
+      if (!response?.next_page_token) break;
+      pageToken = response.next_page_token;
     }
 
     return result;
@@ -292,9 +293,18 @@ export class AlpacaOptionsProvider implements OptionsProvider {
     const queryString = searchParams.toString();
     const path = `/v2/options/contracts${queryString ? `?${queryString}` : ""}`;
 
-    const response = await this.client.tradingRequest<AlpacaOptionsContractsResponse>("GET", path);
-
-    return (response.option_contracts || []).map(parseOptionContract);
+    const contracts: OptionContract[] = [];
+    let nextPath = path;
+    const maxContracts = params.limit ?? 1000;
+    for (let page = 0; page < 10 && contracts.length < maxContracts; page += 1) {
+      const response = await this.client.tradingRequest<AlpacaOptionsContractsResponse>("GET", nextPath);
+      contracts.push(...(response.option_contracts || []).map(parseOptionContract));
+      if (!response.next_page_token) break;
+      const nextParams = new URLSearchParams(queryString);
+      nextParams.set("page_token", response.next_page_token);
+      nextPath = `/v2/options/contracts?${nextParams.toString()}`;
+    }
+    return contracts.slice(0, maxContracts);
   }
 
   /**

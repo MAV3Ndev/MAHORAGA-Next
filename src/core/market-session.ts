@@ -2,6 +2,7 @@ import type { MarketClock } from "./types";
 
 export const SIGNAL_RESEARCH_INTERVAL_MS = 120_000;
 export const POSITION_RESEARCH_INTERVAL_MS = 300_000;
+export const SIGNAL_RESEARCH_PREMARKET_MINUTES = 60;
 
 export interface MarketSessionState {
   clockNowMs: number;

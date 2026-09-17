@@ -142,6 +142,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
   entry_min_evidence_axes: 3,
   entry_require_catalyst: true,
   entry_require_trend_confirmation: true,
+  entry_require_market_evidence: false,
   entry_max_price_change_24h_pct: 8,
   entry_max_price_change_1h_pct: 3,
 

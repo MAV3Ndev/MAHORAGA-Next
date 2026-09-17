@@ -52,7 +52,7 @@ describe("Alpaca Market Data Provider", () => {
 
       expect(mockClient.dataRequest).toHaveBeenCalledWith(
         "GET",
-        "/v2/stocks/AAPL/bars",
+        "/v2/stocks/bars",
         expect.objectContaining({ timeframe: "1Day" })
       );
       expect(bars).toHaveLength(1);
@@ -61,17 +61,6 @@ describe("Alpaca Market Data Provider", () => {
       expect(bars[0]!.l).toBe(149.5);
       expect(bars[0]!.c).toBe(151.5);
       expect(bars[0]!.v).toBe(1000000);
-    });
-
-    it("handles array response format", async () => {
-      mockClient.dataRequest.mockResolvedValueOnce({
-        bars: [mockBar],
-      });
-
-      const bars = await provider.getBars("AAPL", "1Day");
-
-      expect(bars).toHaveLength(1);
-      expect(bars[0]!.c).toBe(151.5);
     });
 
     it("returns empty array when no bars", async () => {
@@ -92,6 +81,22 @@ describe("Alpaca Market Data Provider", () => {
       expect(bars).toEqual([]);
     });
 
+    it("follows next_page_token until the requested limit is filled", async () => {
+      mockClient.dataRequest
+        .mockResolvedValueOnce({ bars: { AAPL: [mockBar] }, next_page_token: "next" })
+        .mockResolvedValueOnce({ bars: { AAPL: [{ ...mockBar, t: "2024-01-16T10:00:00Z" }] } });
+
+      const bars = await provider.getBars("AAPL", "1Day", { limit: 2 });
+
+      expect(bars).toHaveLength(2);
+      expect(mockClient.dataRequest).toHaveBeenNthCalledWith(
+        2,
+        "GET",
+        "/v2/stocks/bars",
+        expect.objectContaining({ symbols: "AAPL", page_token: "next", limit: 1 })
+      );
+    });
+
     it("passes optional params", async () => {
       mockClient.dataRequest.mockResolvedValueOnce({ bars: {} });
 
@@ -103,7 +108,8 @@ describe("Alpaca Market Data Provider", () => {
         feed: "iex",
       });
 
-      expect(mockClient.dataRequest).toHaveBeenCalledWith("GET", "/v2/stocks/AAPL/bars", {
+      expect(mockClient.dataRequest).toHaveBeenCalledWith("GET", "/v2/stocks/bars", {
+        symbols: "AAPL",
         timeframe: "1Hour",
         start: "2024-01-01",
         end: "2024-01-15",
@@ -118,7 +124,7 @@ describe("Alpaca Market Data Provider", () => {
 
       await provider.getBars("BTC/USD", "1Day");
 
-      expect(mockClient.dataRequest).toHaveBeenCalledWith("GET", "/v2/stocks/BTC%2FUSD/bars", expect.any(Object));
+      expect(mockClient.dataRequest).toHaveBeenCalledWith("GET", "/v2/stocks/bars", expect.objectContaining({ symbols: "BTC/USD" }));
     });
   });
 
@@ -130,7 +136,7 @@ describe("Alpaca Market Data Provider", () => {
 
       const bar = await provider.getLatestBar("AAPL");
 
-      expect(mockClient.dataRequest).toHaveBeenCalledWith("GET", "/v2/stocks/AAPL/bars/latest");
+      expect(mockClient.dataRequest).toHaveBeenCalledWith("GET", "/v2/stocks/bars/latest", { symbols: "AAPL" });
       expect(bar.c).toBe(151.5);
     });
 
@@ -168,7 +174,7 @@ describe("Alpaca Market Data Provider", () => {
 
       const quote = await provider.getQuote("AAPL");
 
-      expect(mockClient.dataRequest).toHaveBeenCalledWith("GET", "/v2/stocks/AAPL/quotes/latest");
+      expect(mockClient.dataRequest).toHaveBeenCalledWith("GET", "/v2/stocks/quotes/latest", { symbols: "AAPL" });
       expect(quote.symbol).toBe("AAPL");
       expect(quote.bid_price).toBe(151.5);
       expect(quote.ask_price).toBe(151.55);
@@ -211,29 +217,18 @@ describe("Alpaca Market Data Provider", () => {
       prevDailyBar: { ...mockBar, c: 150.0 },
     };
 
-    it("fetches snapshot for symbol (direct response format)", async () => {
-      mockClient.dataRequest.mockResolvedValueOnce(mockSnapshot);
+    it("fetches snapshot for symbol", async () => {
+      mockClient.dataRequest.mockResolvedValueOnce({ AAPL: mockSnapshot });
 
       const snapshot = await provider.getSnapshot("AAPL");
 
-      expect(mockClient.dataRequest).toHaveBeenCalledWith("GET", "/v2/stocks/AAPL/snapshot");
+      expect(mockClient.dataRequest).toHaveBeenCalledWith("GET", "/v2/stocks/snapshots", { symbols: "AAPL" });
       expect(snapshot.symbol).toBe("AAPL");
       expect(snapshot.latest_trade.price).toBe(151.5);
       expect(snapshot.latest_quote.bid_price).toBe(151.5);
       expect(snapshot.minute_bar.c).toBe(151.5);
       expect(snapshot.daily_bar.c).toBe(151.5);
       expect(snapshot.prev_daily_bar.c).toBe(150.0);
-    });
-
-    it("fetches snapshot for symbol (keyed response format)", async () => {
-      mockClient.dataRequest.mockResolvedValueOnce({
-        AAPL: mockSnapshot,
-      });
-
-      const snapshot = await provider.getSnapshot("AAPL");
-
-      expect(snapshot.symbol).toBe("AAPL");
-      expect(snapshot.latest_trade.price).toBe(151.5);
     });
 
     it("throws when response is null", async () => {
@@ -261,9 +256,7 @@ describe("Alpaca Market Data Provider", () => {
     };
 
     it("fetches crypto snapshot", async () => {
-      mockClient.dataRequest.mockResolvedValueOnce({
-        snapshots: { "BTC/USD": mockCryptoSnapshot },
-      });
+      mockClient.dataRequest.mockResolvedValueOnce({ "BTC/USD": mockCryptoSnapshot });
 
       const snapshot = await provider.getCryptoSnapshot("BTC/USD");
 
@@ -276,7 +269,7 @@ describe("Alpaca Market Data Provider", () => {
 
     it("throws when no crypto snapshot data", async () => {
       mockClient.dataRequest.mockResolvedValueOnce({
-        snapshots: {},
+        
       });
 
       await expect(provider.getCryptoSnapshot("BTC/USD")).rejects.toThrow("No crypto snapshot data for BTC/USD");

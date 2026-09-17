@@ -53,6 +53,7 @@ export function evaluateEntryQuality(
     | "entry_min_evidence_axes"
     | "entry_require_catalyst"
     | "entry_require_trend_confirmation"
+    | "entry_require_market_evidence"
     | "entry_max_price_change_24h_pct"
     | "entry_max_price_change_1h_pct"
   >
@@ -81,7 +82,7 @@ export function evaluateEntryQuality(
       Number(momentumConfirmed),
   };
 
-  if (evidence.marketEvidenceSourceCount === 0) {
+  if (config.entry_require_market_evidence && evidence.marketEvidenceSourceCount === 0) {
     return { allowed: false, reason: "social_only", evidence };
   }
   if (config.entry_require_catalyst && evidence.catalystCount === 0) {

@@ -19,6 +19,7 @@
   "min_entry_signal_consensus": 0.15,
   "single_source_entry_min_confidence": 0.82,
   "exceptional_entry_confidence": 0.9,
+  "entry_require_market_evidence": false,
   "analyst_buy_requires_research_confirmation": true,
   
   "take_profit_pct": 10,

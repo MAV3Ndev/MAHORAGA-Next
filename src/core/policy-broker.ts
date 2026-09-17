@@ -39,6 +39,11 @@ export interface PolicyBrokerDeps {
     isCrypto: boolean;
     status: string;
     orderType: string;
+    orderId: string;
+    qty?: number;
+    filledQty?: number;
+    filledAvgPrice?: number;
+    limitPrice?: number;
   }) => void | Promise<void>;
   /** Called after a successful sell/close order */
   onSell?: (trade: {
@@ -46,6 +51,10 @@ export interface PolicyBrokerDeps {
     reason: string;
     status: string;
     orderType: string;
+    orderId: string;
+    qty?: number;
+    filledQty?: number;
+    filledAvgPrice?: number;
     extendedHours?: boolean;
     limitPrice?: number;
   }) => void | Promise<void>;
@@ -170,6 +179,11 @@ function parseOrderPrice(order: Pick<Order, "limit_price" | "stop_price">): numb
 function parseOrderQty(order: Pick<Order, "qty">): number {
   const parsed = Number.parseFloat(order.qty);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseOptionalOrderNumber(value: string | null | undefined): number | undefined {
+  const parsed = Number.parseFloat(value ?? "");
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function isFilledOrderStatus(status: unknown): boolean {
@@ -649,10 +663,16 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
         isCrypto,
         status: String(alpacaOrder.status ?? "submitted"),
         orderType: String(alpacaOrder.order_type ?? alpacaOrder.type ?? "market"),
+        orderId: alpacaOrder.id,
+        qty: parseOptionalOrderNumber(alpacaOrder.qty),
+        filledQty: parseOptionalOrderNumber(alpacaOrder.filled_qty),
+        filledAvgPrice: parseOptionalOrderNumber(alpacaOrder.filled_avg_price),
+        limitPrice: parseOptionalOrderNumber(alpacaOrder.limit_price),
       });
       return {
         submitted: true,
         metadata: {
+          order_id: alpacaOrder.id,
           order_status: alpacaOrder.status,
           order_type: alpacaOrder.order_type ?? alpacaOrder.type,
           notional: adjustedNotional,
@@ -861,6 +881,10 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
             reason,
             status: String(order.status ?? "submitted"),
             orderType: String(order.order_type ?? order.type ?? "limit"),
+            orderId: order.id,
+            qty: parseOptionalOrderNumber(order.qty),
+            filledQty: parseOptionalOrderNumber(order.filled_qty),
+            filledAvgPrice: parseOptionalOrderNumber(order.filled_avg_price),
             extendedHours: true,
             limitPrice,
           });
@@ -886,6 +910,10 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
         reason,
         status: String(order.status ?? "submitted"),
         orderType: String(order.order_type ?? order.type ?? "market"),
+        orderId: order.id,
+        qty: parseOptionalOrderNumber(order.qty),
+        filledQty: parseOptionalOrderNumber(order.filled_qty),
+        filledAvgPrice: parseOptionalOrderNumber(order.filled_avg_price),
       });
       return true;
     } catch (error) {

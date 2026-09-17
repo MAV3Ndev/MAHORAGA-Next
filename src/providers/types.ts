@@ -197,6 +197,7 @@ export interface BarsParams {
   limit?: number;
   adjustment?: "raw" | "split" | "dividend" | "all";
   feed?: "iex" | "sip";
+  page_token?: string;
 }
 
 export interface BrokerProvider {

@@ -106,6 +106,7 @@ export const AgentConfigSchema = z
     entry_min_evidence_axes: z.number().int().min(2).max(4),
     entry_require_catalyst: z.boolean(),
     entry_require_trend_confirmation: z.boolean(),
+    entry_require_market_evidence: z.boolean().default(false),
     entry_max_price_change_24h_pct: z.number().min(1).max(50),
     entry_max_price_change_1h_pct: z.number().min(0.5).max(20),
 
