@@ -27,7 +27,8 @@
         <activity
             android:name=".SocialLoginActivity"
             android:exported="false"
-            android:theme="@style/AppTheme.NoActionBarLaunch" />
+            android:theme="@style/AppTheme.NoActionBar"
+            android:windowSoftInputMode="adjustResize" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

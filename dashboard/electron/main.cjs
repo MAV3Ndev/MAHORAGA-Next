@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, Notification, powerMonitor, session, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, Menu, net, Notification, powerMonitor, session, shell } = require("electron");
 const { createWriteStream } = require("node:fs");
 const { mkdir, readFile, writeFile } = require("node:fs/promises");
 const path = require("node:path");
@@ -360,12 +360,32 @@ async function collectSocialCookies(loginSession, cookieUrls, requiredCookies) {
   return [...relevant.entries()].map(([name, value]) => `${name}=${value}`).join("; ");
 }
 
+function probeSocialAuth(loginSession, probeUrl) {
+  return new Promise((resolve) => {
+    let request;
+    try {
+      request = net.request({ url: probeUrl, session: loginSession });
+    } catch {
+      resolve(false);
+      return;
+    }
+    request.on("response", (response) => {
+      resolve(Boolean(response.statusCode && response.statusCode >= 200 && response.statusCode < 300));
+      response.on("data", () => {});
+      response.on("end", () => {});
+    });
+    request.on("error", () => resolve(false));
+    request.end();
+  });
+}
+
 function openSocialLoginWindow(input) {
   return new Promise((resolve) => {
     const provider = String(input?.provider || "account");
     const loginUrl = String(input?.url || "");
     const cookieUrls = Array.isArray(input?.cookieUrls) ? input.cookieUrls.map(String) : [];
     const requiredCookies = Array.isArray(input?.requiredCookies) ? input.requiredCookies.map(String) : [];
+    const authProbeUrl = /^https:\/\//.test(String(input?.authProbeUrl || "")) ? String(input.authProbeUrl) : "";
 
     if (!/^https:\/\//.test(loginUrl) || cookieUrls.length === 0 || requiredCookies.length === 0) {
       resolve({ status: "error", message: "Invalid social login request." });
@@ -423,10 +443,27 @@ function openSocialLoginWindow(input) {
       return { action: "deny" };
     });
 
+    let probing = false;
+    let lastProbeAt = 0;
     const checkCookies = () => {
+      if (settled) return;
       collectSocialCookies(loginSession, cookieUrls, requiredCookies)
-        .then((cookies) => {
-          if (cookies) finish({ status: "ok", cookies });
+        .then(async (cookies) => {
+          if (!cookies || settled) return;
+          if (authProbeUrl) {
+            if (probing || Date.now() - lastProbeAt < 2000) return;
+            probing = true;
+            lastProbeAt = Date.now();
+            try {
+              if (await probeSocialAuth(loginSession, authProbeUrl)) {
+                finish({ status: "ok", cookies });
+              }
+            } finally {
+              probing = false;
+            }
+            return;
+          }
+          finish({ status: "ok", cookies });
         })
         .catch(() => {});
     };

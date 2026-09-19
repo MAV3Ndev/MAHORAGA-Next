@@ -36,6 +36,12 @@ export interface SocialLoginRequest {
   url: string
   cookieUrls: string[]
   requiredCookies: string[]
+  /**
+   * Optional HTTPS endpoint probed with the captured cookies before capture
+   * completes. A 2xx response is treated as proof of an authenticated session.
+   * Needed for providers that issue session cookies to anonymous visitors.
+   */
+  authProbeUrl?: string
 }
 
 export interface SocialLoginResult {
@@ -91,7 +97,10 @@ const SOCIAL_LOGIN_TARGETS: Record<SocialLoginProvider, Omit<SocialLoginRequest,
   reddit: {
     url: 'https://www.reddit.com/login',
     cookieUrls: ['https://www.reddit.com', 'https://reddit.com', 'https://old.reddit.com'],
+    // Anonymous visitors also receive session cookies, so capture is gated
+    // on the auth probe below rather than cookie presence alone.
     requiredCookies: ['reddit_session', 'token_v2'],
+    authProbeUrl: 'https://www.reddit.com/api/v1/me',
   },
   twitter: {
     url: 'https://x.com/login',

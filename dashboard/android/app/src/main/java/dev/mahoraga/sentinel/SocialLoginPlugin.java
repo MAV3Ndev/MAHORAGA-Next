@@ -31,6 +31,7 @@ public class SocialLoginPlugin extends Plugin {
         Intent intent = new Intent(getContext(), SocialLoginActivity.class);
         intent.putExtra(SocialLoginActivity.EXTRA_PROVIDER, provider);
         intent.putExtra(SocialLoginActivity.EXTRA_URL, url);
+        intent.putExtra(SocialLoginActivity.EXTRA_AUTH_PROBE_URL, call.getString("authProbeUrl"));
         intent.putStringArrayListExtra(SocialLoginActivity.EXTRA_COOKIE_URLS, new ArrayList<>(cookieUrls));
         intent.putStringArrayListExtra(SocialLoginActivity.EXTRA_REQUIRED_COOKIES, new ArrayList<>(requiredCookies));
         startActivityForResult(call, intent, "handleLoginResult");

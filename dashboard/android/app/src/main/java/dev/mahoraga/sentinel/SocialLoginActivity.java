@@ -17,6 +17,8 @@ import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -32,13 +34,19 @@ public class SocialLoginActivity extends Activity {
     public static final String EXTRA_URL = "url";
     public static final String EXTRA_COOKIE_URLS = "cookieUrls";
     public static final String EXTRA_REQUIRED_COOKIES = "requiredCookies";
+    public static final String EXTRA_AUTH_PROBE_URL = "authProbeUrl";
     public static final String RESULT_COOKIES = "cookies";
 
     private static final int POLL_INTERVAL_MS = 800;
+    private static final int PROBE_INTERVAL_MS = 2000;
 
     private WebView webView;
     private Handler handler;
     private boolean finished;
+    private volatile boolean probing;
+    private long lastProbeAt;
+    private String authProbeUrl;
+    private String userAgent;
     private List<String> cookieUrls = new ArrayList<>();
     private List<String> requiredCookies = new ArrayList<>();
 
@@ -61,6 +69,8 @@ public class SocialLoginActivity extends Activity {
         String url = intent.getStringExtra(EXTRA_URL);
         cookieUrls = intent.getStringArrayListExtra(EXTRA_COOKIE_URLS);
         requiredCookies = intent.getStringArrayListExtra(EXTRA_REQUIRED_COOKIES);
+        String probeUrl = intent.getStringExtra(EXTRA_AUTH_PROBE_URL);
+        if (probeUrl != null && probeUrl.startsWith("https://")) authProbeUrl = probeUrl;
         if (cookieUrls == null) cookieUrls = new ArrayList<>();
         if (requiredCookies == null) requiredCookies = new ArrayList<>();
 
@@ -101,10 +111,10 @@ public class SocialLoginActivity extends Activity {
         webView = new WebView(this);
         webView.getSettings().setJavaScriptEnabled(true);
         webView.getSettings().setDomStorageEnabled(true);
-        webView.getSettings().setUserAgentString(
+        userAgent =
             "Mozilla/5.0 (Linux; Android " + Build.VERSION.RELEASE + "; " + Build.MODEL
-                + ") AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
-        );
+                + ") AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
+        webView.getSettings().setUserAgentString(userAgent);
         cookieManager.setAcceptThirdPartyCookies(webView, true);
         webView.setWebViewClient(
             new WebViewClient() {
@@ -118,6 +128,7 @@ public class SocialLoginActivity extends Activity {
         root.addView(header, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         root.addView(webView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         setContentView(root);
+        getWindow().setStatusBarColor(Color.rgb(11, 13, 18));
 
         handler = new Handler(Looper.getMainLooper());
         webView.loadUrl(url);
@@ -149,12 +160,54 @@ public class SocialLoginActivity extends Activity {
         }
         if (!ready) return;
 
+        String cookies = TextUtils.join("; ", collected.values());
+        if (authProbeUrl != null) {
+            startAuthProbe(cookies);
+            return;
+        }
+        finishCapture(cookies);
+    }
+
+    private void finishCapture(String cookies) {
+        if (finished) return;
         finished = true;
-        cookieManager.flush();
+        CookieManager.getInstance().flush();
         Intent result = new Intent();
-        result.putExtra(RESULT_COOKIES, TextUtils.join("; ", collected.values()));
+        result.putExtra(RESULT_COOKIES, cookies);
         setResult(RESULT_OK, result);
         finish();
+    }
+
+    private void startAuthProbe(String cookieHeader) {
+        long now = System.currentTimeMillis();
+        if (probing || now - lastProbeAt < PROBE_INTERVAL_MS) return;
+        probing = true;
+        lastProbeAt = now;
+        new Thread(() -> {
+            boolean authenticated = probeAuth(authProbeUrl, cookieHeader, userAgent);
+            handler.post(() -> {
+                probing = false;
+                if (authenticated) finishCapture(cookieHeader);
+            });
+        }).start();
+    }
+
+    private boolean probeAuth(String probeUrl, String cookieHeader, String ua) {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(probeUrl).openConnection();
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("Cookie", cookieHeader);
+            if (ua != null) conn.setRequestProperty("User-Agent", ua);
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+            int code = conn.getResponseCode();
+            return code >= 200 && code < 300;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
     }
 
     private void finishCancelled() {

@@ -85,6 +85,8 @@ import { createTrade } from "../storage/d1/queries/trades";
 import { createR2Client } from "../storage/r2/client";
 import { R2Paths } from "../storage/r2/paths";
 import { activeStrategy } from "../strategy";
+import { testRedditCookieConnection } from "../strategy/default/gatherers/reddit";
+import { testTwitterCookieConnection } from "../strategy/default/gatherers/twitter";
 import type { BuyCandidate, SellCandidate, StrategyContext, StrategySignalResearchCandidate } from "../strategy/types";
 
 interface TechnicalDataCacheEntry {
@@ -2464,6 +2466,8 @@ export class MahoragaHarness extends DurableObject<Env> {
       "position-history",
       "setup/status",
       "llm-diagnostics",
+      "twitter/test",
+      "reddit/test",
     ];
     if (protectedActions.includes(action)) {
       if (!this.isAuthorized(request)) return this.unauthorizedResponse();
@@ -2496,6 +2500,12 @@ export class MahoragaHarness extends DurableObject<Env> {
           return this.handleGetPositionHistory(url);
         case "llm-diagnostics":
           return this.handleLLMDiagnostics();
+        case "twitter/test":
+          if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
+          return this.handleTwitterCookieTest(request);
+        case "reddit/test":
+          if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
+          return this.handleRedditCookieTest(request);
         case "trigger":
           await this.alarm();
           return this.jsonResponse({ ok: true, message: "Alarm triggered" });
@@ -2571,6 +2581,96 @@ export class MahoragaHarness extends DurableObject<Env> {
     this.initializeLLM();
     await this.persist();
     return this.jsonResponse({ ok: true, config: this.getDashboardConfig() });
+  }
+
+  private jsonErrorResponse(error: string, data: unknown, status = 400): Response {
+    return new Response(JSON.stringify({ ok: false, error, data }), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  private collectTestAccounts(body: unknown, envCookies?: string): Array<{ cookies: string; label?: string }> {
+    const payload = (body ?? {}) as {
+      accounts?: Array<{ cookies?: string; label?: string }>;
+      prefer_env?: boolean;
+    };
+    const accounts = (Array.isArray(payload.accounts) ? payload.accounts : [])
+      .map((account) => ({
+        cookies: typeof account?.cookies === "string" ? account.cookies.trim() : "",
+        label: typeof account?.label === "string" ? account.label.trim() : undefined,
+      }))
+      .filter((account) => account.cookies);
+
+    const envValue = envCookies?.trim();
+    if (accounts.length === 0 && payload.prefer_env !== false && envValue) {
+      accounts.push({ cookies: envValue, label: "env" });
+    }
+    return accounts;
+  }
+
+  private async handleTwitterCookieTest(request: Request): Promise<Response> {
+    const accounts = this.collectTestAccounts(await request.json().catch(() => ({})), this.env.TWITTER_COOKIES);
+    if (accounts.length === 0) {
+      return this.jsonErrorResponse("No Twitter/X cookie accounts configured", { account_count: 0, passed: 0 });
+    }
+
+    const results: Array<{ index: number; label?: string; ok: boolean; error?: string }> = [];
+    let passed = 0;
+    for (const [index, account] of accounts.entries()) {
+      const result = await testTwitterCookieConnection(account.cookies);
+      if (result.ok) passed += 1;
+      results.push({ index, label: account.label, ok: result.ok, error: result.error });
+    }
+
+    const data = { account_count: accounts.length, passed, results };
+    if (passed === 0) {
+      return this.jsonErrorResponse(
+        results.find((result) => result.error)?.error || "Twitter/X cookie authentication failed",
+        data
+      );
+    }
+    return this.jsonResponse({
+      ok: true,
+      message: `Twitter/X cookie authentication succeeded (${passed}/${accounts.length} accounts)`,
+      data,
+    });
+  }
+
+  private async handleRedditCookieTest(request: Request): Promise<Response> {
+    const body = (await request.json().catch(() => ({}))) as { user_agent?: string };
+    const accounts = this.collectTestAccounts(body, this.env.REDDIT_COOKIES);
+    if (accounts.length === 0) {
+      return this.jsonErrorResponse("No Reddit cookie accounts configured", { account_count: 0, passed: 0 });
+    }
+
+    const userAgent =
+      (typeof body.user_agent === "string" && body.user_agent.trim()) ||
+      this.state.config.reddit_user_agent?.trim() ||
+      this.env.REDDIT_USER_AGENT?.trim() ||
+      "";
+    const subreddit = "wallstreetbets";
+
+    const results: Array<{ index: number; label?: string; ok: boolean; status?: number; error?: string }> = [];
+    let passed = 0;
+    for (const [index, account] of accounts.entries()) {
+      const result = await testRedditCookieConnection(account.cookies, userAgent, subreddit);
+      if (result.ok) passed += 1;
+      results.push({ index, label: account.label, ok: result.ok, status: result.status, error: result.error });
+    }
+
+    const data = { account_count: accounts.length, passed, subreddit, results };
+    if (passed === 0) {
+      return this.jsonErrorResponse(
+        results.find((result) => result.error)?.error || "Reddit cookie connection failed",
+        data
+      );
+    }
+    return this.jsonResponse({
+      ok: true,
+      message: `Reddit cookie connection succeeded (${passed}/${accounts.length} accounts)`,
+      data,
+    });
   }
 
   private async handleEnable(): Promise<Response> {
