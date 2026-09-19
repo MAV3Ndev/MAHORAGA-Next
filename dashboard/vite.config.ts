@@ -7,7 +7,13 @@ const apiTarget = process.env.MAHORAGA_API_URL || `http://localhost:${process.en
 export default defineConfig({
   base: './',
   plugins: [react(), tailwindcss()],
+  optimizeDeps: {
+    entries: ['index.html', 'src/main.tsx'],
+  },
   server: {
+    watch: {
+      ignored: ['**/android/**', '**/dist/**', '**/release/**', '**/electron/**'],
+    },
     port: 3000,
     proxy: {
       '/api': {

@@ -43,7 +43,7 @@ export function UpdateControls({
   return (
     <div
       className={clsx(
-        "border border-hud-line bg-hud-bg/70",
+        "rounded-lg border border-hud-line bg-hud-bg",
         compact ? "flex flex-wrap items-center justify-between gap-3 p-3" : "p-4",
         className
       )}

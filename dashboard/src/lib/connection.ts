@@ -66,11 +66,78 @@ const API_URL_KEY = 'mahoraga_connection_url'
 const TOKEN_KEY = 'mahoraga_api_token'
 const sentinelUpdatePlugin = registerPlugin<NativeUpdatePlugin>('SentinelUpdate')
 
+type ForcedShell = 'native' | 'desktop' | null
+
+function getForcedShell(): ForcedShell {
+  if (typeof window === 'undefined') return null
+  const value = new URLSearchParams(window.location.search).get('shell')
+  return value === 'native' || value === 'desktop' ? value : null
+}
+
+let previewDesktopBridge: DesktopBridge | null = null
+
+function getPreviewDesktopBridge(): DesktopBridge {
+  if (!previewDesktopBridge) {
+    previewDesktopBridge = {
+      loadConnectionSettings: async () => ({
+        apiUrl: window.localStorage.getItem(API_URL_KEY) || getDefaultApiUrl(),
+        bearerToken: window.localStorage.getItem(TOKEN_KEY) || '',
+      }),
+      saveConnectionSettings: async (settings) => {
+        window.localStorage.setItem(API_URL_KEY, settings.apiUrl)
+        window.localStorage.setItem(TOKEN_KEY, settings.bearerToken)
+        return settings
+      },
+      request: async (input) => {
+        const connection = input.connection || {
+          apiUrl: window.localStorage.getItem(API_URL_KEY) || '',
+          bearerToken: window.localStorage.getItem(TOKEN_KEY) || '',
+        }
+        const url = buildAgentUrl(connection.apiUrl || '', input.path)
+        const headers: Record<string, string> = {
+          Accept: 'application/json',
+          Authorization: `Bearer ${connection.bearerToken}`,
+        }
+        let body: string | undefined
+        if (input.body !== undefined) {
+          headers['Content-Type'] = 'application/json'
+          body = JSON.stringify(input.body)
+        }
+        const response = await fetch(url, { method: input.method || 'GET', headers, body })
+        return { ok: response.ok, status: response.status, data: parseJson(await response.text()) }
+      },
+      getAppVersion: async () => 'preview',
+      checkForUpdates: async () => ({ state: 'not-available' }),
+      installUpdate: async () => ({ state: 'not-available' }),
+      openExternal: async (url) => {
+        window.open(url, '_blank', 'noopener')
+      },
+      notify: async () => false,
+      onUpdateEvent: () => () => {},
+      onLifecycleEvent: () => () => {},
+    }
+  }
+  return previewDesktopBridge
+}
+
+function getDesktopBridge(): DesktopBridge | undefined {
+  if (typeof window === 'undefined') return undefined
+  if (window.mahoragaDesktop) return window.mahoragaDesktop
+  if (getForcedShell() === 'desktop') return getPreviewDesktopBridge()
+  return undefined
+}
+
 export function isDesktopPanel(): boolean {
-  return typeof window !== 'undefined' && Boolean(window.mahoragaDesktop)
+  const forced = getForcedShell()
+  if (forced === 'desktop') return true
+  if (forced === 'native') return false
+  return typeof window !== 'undefined' && Boolean(getDesktopBridge())
 }
 
 export function isNativeShell(): boolean {
+  const forced = getForcedShell()
+  if (forced === 'native') return true
+  if (forced === 'desktop') return false
   if (typeof window === 'undefined') return false
   if (isDesktopPanel()) return false
   if (Capacitor.isNativePlatform()) return true
@@ -78,7 +145,7 @@ export function isNativeShell(): boolean {
 }
 
 function getNativeUpdatePlugin(): NativeUpdatePlugin | undefined {
-  if (!isNativeShell()) return undefined
+  if (!isNativeShell() || getForcedShell()) return undefined
   return sentinelUpdatePlugin
 }
 
@@ -112,7 +179,7 @@ function sanitizeConnection(settings: Partial<ConnectionSettings> | null | undef
 
 export async function loadConnectionSettings(): Promise<ConnectionSettings> {
   if (isDesktopPanel()) {
-    const saved = await window.mahoragaDesktop?.loadConnectionSettings()
+    const saved = await getDesktopBridge()?.loadConnectionSettings()
     return sanitizeConnection(saved)
   }
 
@@ -126,7 +193,7 @@ export async function saveConnectionSettings(settings: ConnectionSettings): Prom
   const sanitized = sanitizeConnection(settings)
 
   if (isDesktopPanel()) {
-    const saved = await window.mahoragaDesktop?.saveConnectionSettings(sanitized)
+    const saved = await getDesktopBridge()?.saveConnectionSettings(sanitized)
     return sanitizeConnection(saved)
   }
 
@@ -178,7 +245,7 @@ export async function requestAgent<T = unknown>(
   }
 
   if (isDesktopPanel()) {
-    const response = await window.mahoragaDesktop?.request({
+    const response = await getDesktopBridge()?.request({
       path,
       method: options.method,
       body: options.body,
@@ -247,7 +314,7 @@ export function getResponseError(data: unknown, fallback: string): string {
 
 export async function showDesktopNotification(title: string, body: string): Promise<boolean> {
   if (!isDesktopPanel()) return false
-  return (await window.mahoragaDesktop?.notify({ title, body })) ?? false
+  return (await getDesktopBridge()?.notify({ title, body })) ?? false
 }
 
 export async function getDesktopAppVersion(): Promise<string | null> {
@@ -257,7 +324,7 @@ export async function getDesktopAppVersion(): Promise<string | null> {
     return result.version || null
   }
   if (!isDesktopPanel()) return null
-  return (await window.mahoragaDesktop?.getAppVersion()) ?? null
+  return (await getDesktopBridge()?.getAppVersion()) ?? null
 }
 
 export async function checkDesktopUpdate(silent = false): Promise<DesktopUpdateEvent | null> {
@@ -266,7 +333,7 @@ export async function checkDesktopUpdate(silent = false): Promise<DesktopUpdateE
     return (await nativeUpdate.checkForUpdates({ silent })) ?? null
   }
   if (!isDesktopPanel()) return null
-  return (await window.mahoragaDesktop?.checkForUpdates({ silent })) ?? null
+  return (await getDesktopBridge()?.checkForUpdates({ silent })) ?? null
 }
 
 export async function installDesktopUpdate(): Promise<DesktopUpdateEvent | null> {
@@ -275,7 +342,7 @@ export async function installDesktopUpdate(): Promise<DesktopUpdateEvent | null>
     return (await nativeUpdate.installUpdate()) ?? null
   }
   if (!isDesktopPanel()) return null
-  return (await window.mahoragaDesktop?.installUpdate()) ?? null
+  return (await getDesktopBridge()?.installUpdate()) ?? null
 }
 
 export function subscribeDesktopUpdate(
@@ -297,11 +364,11 @@ export function subscribeDesktopUpdate(
       void handle?.remove()
     }
   }
-  return window.mahoragaDesktop?.onUpdateEvent(listener)
+  return getDesktopBridge()?.onUpdateEvent(listener)
 }
 
 export function subscribeDesktopLifecycle(
   listener: (event: DesktopLifecycleEvent) => void,
 ): (() => void) | undefined {
-  return window.mahoragaDesktop?.onLifecycleEvent(listener)
+  return getDesktopBridge()?.onLifecycleEvent(listener)
 }

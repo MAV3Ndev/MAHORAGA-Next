@@ -938,6 +938,31 @@ function getUpdatePromptKey(status: DesktopUpdateEvent | null): string | null {
   return status.update?.version || status.latestVersion || status.update?.releaseName || "unknown";
 }
 
+function SentinelMark({ size = 16, className }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect
+        x="5.2"
+        y="5.2"
+        width="13.6"
+        height="13.6"
+        rx="3"
+        transform="rotate(45 12 12)"
+        stroke="var(--color-hud-primary)"
+        strokeWidth="1.7"
+      />
+      <circle cx="12" cy="12" r="2.7" fill="var(--color-hud-primary)" />
+    </svg>
+  );
+}
+
 export default function App() {
   const nativeShell = isNativeShell();
   const desktopPanel = isDesktopPanel();
@@ -986,7 +1011,7 @@ export default function App() {
   const remoteLinkExpanded = nativeShell ? showRemoteLinkDetails : true;
   const portfolioDetailsExpanded = nativeShell ? showPortfolioDetails : true;
   const periodButtonClass = nativeShell
-    ? "flex min-h-10 items-center rounded-lg border px-3 transition-colors"
+    ? "flex min-h-9 items-center rounded-md border px-2 text-[11px] font-medium transition-colors"
     : desktopPanel
       ? "hud-control-chip flex min-h-7 items-center rounded-[3px] border px-2.5 text-[11px] font-medium transition-colors"
       : "flex min-h-8 items-center rounded-md border px-2.5 text-[11px] transition-colors";
@@ -1512,7 +1537,6 @@ export default function App() {
         </DetailDialog>
       </motion.div>
     ) : null;
-  const totalPlStateLabel = totalPl >= 0 ? "Ahead Of Baseline" : "Below Baseline";
   const headerStatusItems: Array<{
     label: string;
     value: string;
@@ -1949,14 +1973,7 @@ export default function App() {
               opacity: 1,
               x: 0,
               filter: "blur(0px)",
-              boxShadow:
-                signalListUpdateToken > 0 && i < 2
-                  ? [
-                      "0 0 0 rgba(111,216,255,0)",
-                      "0 0 18px rgba(111,216,255,0.18)",
-                      "0 0 0 rgba(111,216,255,0)",
-                    ]
-                  : "0 0 0 rgba(111,216,255,0)",
+              boxShadow: "0 0 0 rgba(0,0,0,0)",
             }}
             exit={{ opacity: 0, x: 12, filter: "blur(6px)" }}
             transition={{ delay: i * 0.02 }}
@@ -2008,13 +2025,7 @@ export default function App() {
           opacity: isNewLog ? [0, 1] : 1,
           x: isNewLog ? [-12, 0] : 0,
           filter: isNewLog ? ["blur(4px)", "blur(0px)"] : "blur(0px)",
-          boxShadow: isNewLog
-            ? [
-                "0 0 0 rgba(111,216,255,0)",
-                "0 0 18px rgba(111,216,255,0.14)",
-                "0 0 0 rgba(111,216,255,0)",
-              ]
-            : "0 0 0 rgba(111,216,255,0)",
+          boxShadow: "0 0 0 rgba(0,0,0,0)",
         }}
         exit={{ opacity: 0, x: 12, filter: "blur(4px)" }}
         transition={isNewLog ? { duration: 0.32, ease: [0.22, 1, 0.36, 1] } : { duration: 0.18 }}
@@ -2034,7 +2045,7 @@ export default function App() {
         desktopPanel
           ? "h-full min-h-0"
           : desktopShell
-            ? "h-[340px] lg:h-[380px]"
+            ? "h-full min-h-[320px]"
             : "h-full min-h-[320px] lg:min-h-[360px]"
       )}
     >
@@ -2110,41 +2121,36 @@ export default function App() {
   if (showStartupSequence) {
     return (
       <div className="hud-startup-screen">
-        <div className="hud-startup-screen__grid" aria-hidden="true" />
         <motion.div
-          initial={{ opacity: 0, scale: 0.985, filter: "blur(12px)" }}
-          animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-          transition={{ duration: 0.48, ease: [0.22, 1, 0.36, 1] }}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
           className="hud-startup-shell"
         >
+          <div className="hud-startup-mark flex items-center gap-3">
+            <SentinelMark size={22} />
+            SENTINEL
+          </div>
           <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.42, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
-            className="hud-startup-mark"
-          >
-            MAHORAGA-Next SENTINEL
-          </motion.div>
-          <motion.div
-            initial={{ opacity: 0, letterSpacing: "0.36em" }}
-            animate={{ opacity: 1, letterSpacing: "0.22em" }}
-            transition={{ duration: 0.4, delay: 0.16 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.4, delay: 0.14 }}
             className="hud-startup-subtitle"
           >
-            Autonomous Tactical Console
+            Autonomous trading console
           </motion.div>
           <div className="hud-startup-loader">
             <motion.div
-              initial={{ scaleX: 0, opacity: 0.55 }}
+              initial={{ scaleX: 0, opacity: 0.6 }}
               animate={{ scaleX: 1, opacity: 1 }}
-              transition={{ duration: 1.05, delay: 0.26, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: 1.05, delay: 0.22, ease: [0.22, 1, 0.36, 1] }}
               className="hud-startup-loader__bar"
             />
           </div>
           <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.32, delay: 0.36 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.3, delay: 0.34 }}
             className="hud-startup-meta"
           >
             <span>BOOTSTRAP</span>
@@ -2160,22 +2166,10 @@ export default function App() {
     return (
       <>
         <div className="min-h-screen bg-hud-bg flex items-center justify-center p-6">
-          <Panel title="BOOTING PANEL" className="max-w-md w-full">
-            <div className="text-center py-10 space-y-3">
-              <div className="text-hud-primary text-2xl">SYNC</div>
-              <p className="text-hud-text-dim text-sm">Loading remote link profile...</p>
-            </div>
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.32, delay: 0.36 }}
-              className="hud-startup-meta"
-            >
-              <span>BOOTSTRAP</span>
-              <span>SYNC</span>
-              <span>READY</span>
-            </motion.div>
-          </Panel>
+          <div className="flex flex-col items-center gap-4">
+            <SentinelMark size={28} />
+            <p className="text-hud-text-dim text-sm">Loading connection profile...</p>
+          </div>
         </div>
         <AnimatePresence>{updateDialog}</AnimatePresence>
       </>
@@ -2195,44 +2189,47 @@ export default function App() {
     return (
       <>
         <div className="min-h-screen bg-hud-bg flex items-center justify-center p-6">
-          <Panel title="CONNECTION ERROR" className="max-w-xl w-full">
-            <div className="py-8 space-y-5">
-              <div className="text-center">
-                <div className="text-hud-error text-2xl mb-4">LINK LOST</div>
-                <p className="text-hud-text-dim text-sm">{error}</p>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="border border-hud-line bg-hud-bg-panel p-4 space-y-2">
-                  <div className="hud-label text-hud-primary">Target</div>
-                  <div className="hud-value-sm break-all">{connection.apiUrl || "UNSET"}</div>
-                </div>
-                <div className="border border-hud-line bg-hud-bg-panel p-4 space-y-2">
-                  <div className="hud-label text-hud-primary">Bearer</div>
-                  <div className="hud-value-sm">{maskBearerToken(connection.bearerToken)}</div>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-3 justify-center">
-                <button type="button" className="hud-button" onClick={() => setShowSetup(true)}>
-                  Edit Connection
-                </button>
-                <button
-                  type="button"
-                  className="hud-button"
-                  onClick={() => {
-                    void handleSaveConnection(connection).catch((retryError) => {
-                      setError(retryError instanceof Error ? retryError.message : "Retry failed");
-                    });
-                  }}
-                >
-                  Retry Link
-                </button>
-              </div>
-
-              {updateControls}
+          <div className="w-full max-w-md rounded-xl border border-hud-line bg-hud-bg-panel p-6 shadow-[0_16px_48px_rgb(0_0_0/0.35)]">
+            <div className="flex items-center gap-3">
+              <SentinelMark size={18} />
+              <span className="hud-title-mark">SENTINEL</span>
             </div>
-          </Panel>
+
+            <div className="mt-6">
+              <div className="text-hud-text-bright text-base font-semibold">Connection failed</div>
+              <p className="text-hud-text-dim mt-1.5 text-sm leading-6">{error}</p>
+            </div>
+
+            <div className="mt-5 grid gap-2 text-[12px]">
+              <div className="flex items-start justify-between gap-4 rounded-lg border border-hud-line bg-hud-bg px-3 py-2.5">
+                <span className="hud-label shrink-0 pt-0.5">Endpoint</span>
+                <span className="min-w-0 break-all font-mono text-hud-text">{connection.apiUrl || "UNSET"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-4 rounded-lg border border-hud-line bg-hud-bg px-3 py-2.5">
+                <span className="hud-label shrink-0">Bearer</span>
+                <span className="font-mono text-hud-text">{maskBearerToken(connection.bearerToken)}</span>
+              </div>
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="hud-button"
+                onClick={() => {
+                  void handleSaveConnection(connection).catch((retryError) => {
+                    setError(retryError instanceof Error ? retryError.message : "Retry failed");
+                  });
+                }}
+              >
+                Retry
+              </button>
+              <button type="button" className="hud-button hud-button-muted" onClick={() => setShowSetup(true)}>
+                Edit connection
+              </button>
+            </div>
+
+            {updateControls && <div className="mt-5">{updateControls}</div>}
+          </div>
         </div>
         <AnimatePresence>{updateDialog}</AnimatePresence>
       </>
@@ -2242,98 +2239,97 @@ export default function App() {
   return (
     <div
       className={clsx(
-        "relative z-[1] min-h-screen overflow-x-hidden bg-hud-bg",
+        "relative z-[1] flex min-h-screen flex-col overflow-x-hidden bg-hud-bg",
         viewportLockedShell && "h-[100dvh] overflow-hidden"
       )}
-      style={viewportLockedShell ? { paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 12px)" } : undefined}
+      style={viewportLockedShell ? { paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 10px)" } : undefined}
     >
-      {desktopPanel && <div className="hud-pointer-glow" aria-hidden="true" />}
       <div
         className={clsx(
-          "mx-auto flex max-w-[1920px] flex-col gap-4 p-3 sm:p-4",
-          viewportLockedShell && "h-full max-h-[100dvh] overflow-hidden",
-          desktopPanel && "gap-3 px-4 py-3"
+          "hud-top-shell shrink-0",
+          nativeShell && "fixed inset-x-0 z-40"
         )}
+        style={nativeShell ? { top: 0, paddingTop: "env(safe-area-inset-top, 0px)" } : undefined}
       >
-        <div
-          className={clsx(
-            nativeShell
-              ? "fixed inset-x-0 z-40 border-b border-hud-line bg-hud-bg/88 backdrop-blur-xl"
-              : desktopPanel
-                ? "hud-top-shell shrink-0 rounded-[4px] border border-hud-line/70 bg-hud-bg-panel/72 px-4 py-2.5 shadow-[0_18px_50px_rgba(0,0,0,0.18)] backdrop-blur-xl"
-                : "shrink-0 border-b border-hud-line pb-3"
-          )}
-          style={nativeShell ? { top: 0 } : undefined}
-        >
-          <div
-            className={clsx("max-w-[1920px] mx-auto", nativeShell ? "px-3 pb-2 pt-3 sm:px-4 sm:pb-3" : "")}
-            style={nativeShell ? { paddingTop: "calc(env(safe-area-inset-top, 0px) + 10px)" } : undefined}
-          >
-            {nativeShell ? (
-              <header className="flex items-center justify-between gap-3">
-                <div className="flex flex-col gap-0.5">
-                  <span className="hud-wordmark">SENTINEL</span>
+        <div className="mx-auto flex max-w-[1920px] items-center justify-between gap-4 px-4 py-2.5">
+          {nativeShell ? (
+            <>
+              <div className="flex items-center gap-2.5">
+                <SentinelMark size={17} />
+                <span className="hud-wordmark">SENTINEL</span>
+              </div>
+              <span className="font-mono text-[12px] tabular-nums text-hud-text-dim">
+                {time.toLocaleTimeString("en-US", { hour12: false })}
+              </span>
+            </>
+          ) : (
+            <>
+              <div className="flex min-w-0 items-center gap-4">
+                <div className="flex items-center gap-2.5">
+                  <SentinelMark size={17} />
+                  <span className="hud-title-mark">SENTINEL</span>
                 </div>
-                <span className="hud-value-sm font-mono text-hud-text">
-                  {time.toLocaleTimeString("en-US", { hour12: false })}
-                </span>
-              </header>
-            ) : (
-              <header
-                className={clsx(
-                  "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between",
-                  desktopPanel && "gap-2"
-                )}
-              >
-                <div className={clsx("flex items-center gap-4 md:gap-6", desktopPanel && "hud-title-rail")}>
-                  <div className="flex items-baseline gap-2">
-                    <span
-                      className={clsx(
-                        "text-xl tracking-tight text-hud-text-bright md:text-2xl",
-                        desktopPanel ? "hud-title-mark font-semibold" : "font-light"
-                      )}
-                    >
-                      MAHORAGA-Next SENTINEL
-                    </span>
-                  </div>
-                  <StatusIndicator
-                    status={isMarketOpen ? "active" : "inactive"}
-                    label={isMarketOpen ? "MARKET OPEN" : "MARKET CLOSED"}
-                    pulse={isMarketOpen}
-                  />
-                </div>
-                <div
-                  className={clsx(
-                    "flex flex-wrap items-center gap-3 md:gap-5",
-                    desktopPanel && "gap-x-4 gap-y-2 md:gap-x-4"
-                  )}
+                <StatusIndicator
+                  status={isMarketOpen ? "active" : "inactive"}
+                  label={isMarketOpen ? "MARKET OPEN" : "MARKET CLOSED"}
+                  pulse={isMarketOpen}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-3 md:gap-4">
+                <StatusBar items={headerStatusItems} />
+                <NotificationBell
+                  compact
+                  overnightActivity={status?.overnightActivity}
+                  premarketPlan={status?.premarketPlan}
+                />
+                <button
+                  type="button"
+                  aria-label="Open settings"
+                  onClick={(event) => {
+                    event.currentTarget.blur();
+                    setShowSettings(true);
+                  }}
+                  className="hud-config-button h-8 w-8 min-h-0 px-0"
                 >
-                  <StatusBar items={headerStatusItems} />
-                  <NotificationBell
-                    compact
-                    overnightActivity={status?.overnightActivity}
-                    premarketPlan={status?.premarketPlan}
-                  />
-                  <span className="hud-value-sm font-mono">{time.toLocaleTimeString("en-US", { hour12: false })}</span>
-                </div>
-              </header>
-            )}
-          </div>
+                  <svg
+                    aria-hidden="true"
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                </button>
+                <span className="hud-value-sm font-mono">{time.toLocaleTimeString("en-US", { hour12: false })}</span>
+              </div>
+            </>
+          )}
         </div>
+      </div>
 
-        {nativeShell && (
-          <div className="shrink-0" style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 64px)" }} />
+      <div
+        className={clsx(
+          "mx-auto flex w-full max-w-[1920px] flex-1 flex-col gap-3 p-3 sm:p-4",
+          viewportLockedShell && "h-full max-h-[100dvh] min-h-0 overflow-hidden",
+          desktopPanel && "px-4 py-3"
         )}
-
-        {desktopPanel && (
+        style={nativeShell ? { paddingTop: "calc(env(safe-area-inset-top, 0px) + 64px)" } : undefined}
+      >
+        {!nativeShell && (
           <motion.div
-            initial={{ opacity: 0, y: 14, filter: "blur(8px)" }}
-            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-            transition={{ duration: 0.34, ease: [0.22, 1, 0.36, 1] }}
-            className="hud-remote-bar hud-remote-bar--desktop shrink-0"
+            initial={desktopPanel ? { opacity: 0, y: 10 } : false}
+            animate={desktopPanel ? { opacity: 1, y: 0 } : undefined}
+            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+            className="hud-remote-bar shrink-0"
           >
             <div className="hud-remote-bar__section">
-              <span className="hud-label text-hud-primary">REMOTE LINK</span>
+              <span className="hud-label">LINK</span>
               <div className="min-w-0">
                 <div className="hud-remote-bar__value truncate font-mono">{connection.apiUrl}</div>
               </div>
@@ -2425,8 +2421,8 @@ export default function App() {
               desktopPanel && "min-h-0 h-full lg:grid-cols-12 lg:items-stretch"
             )}
           >
-            {!desktopPanel && (
-              <div className={clsx("shrink-0 min-h-0", desktopShell && "lg:col-span-4")}>
+            {nativeShell && (
+              <div className="shrink-0 min-h-0">
                 <Panel
                   title="REMOTE LINK"
                   titleRight={
@@ -2434,7 +2430,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setShowRemoteLinkDetails((current) => !current)}
-                        className="flex h-11 w-11 items-center justify-center rounded-xl border border-hud-line/60 bg-hud-bg/55 text-hud-primary transition-transform hover:border-hud-primary/40 hover:text-hud-text"
+                        className="flex h-11 w-11 items-center justify-center rounded-lg border border-hud-line bg-hud-bg text-hud-text-dim transition-colors hover:border-hud-border hover:text-hud-text"
                         aria-label={remoteLinkExpanded ? "Collapse remote link" : "Expand remote link"}
                       >
                         <svg
@@ -2494,11 +2490,11 @@ export default function App() {
                           )}
                         >
                           <div className={clsx("grid gap-3", nativeShell ? "sm:grid-cols-2" : "grid-cols-1")}>
-                            <div className="min-w-0 rounded-xl border border-hud-line bg-hud-bg/55 px-4 py-4">
+                            <div className="min-w-0 rounded-lg border border-hud-line bg-hud-bg px-4 py-4">
                               <div className="hud-label mb-2">ENDPOINT</div>
                               <div className="hud-value-sm break-all">{connection.apiUrl}</div>
                             </div>
-                            <div className="rounded-xl border border-hud-line bg-hud-bg/55 px-4 py-4">
+                            <div className="rounded-lg border border-hud-line bg-hud-bg px-4 py-4">
                               <div className="hud-label mb-2">BEARER</div>
                               <div className="hud-value-sm">{maskBearerToken(connection.bearerToken)}</div>
                             </div>
@@ -2542,7 +2538,7 @@ export default function App() {
                         <div
                           className={clsx("grid gap-3", desktopShell ? "md:grid-cols-3" : "grid-cols-1 sm:grid-cols-2")}
                         >
-                          <div className="rounded-xl border border-hud-line bg-hud-bg/60 px-4 py-4">
+                          <div className="rounded-lg border border-hud-line bg-hud-bg px-4 py-4">
                             <div className="hud-label text-hud-primary mb-2">AGENT</div>
                             <div
                               className={clsx("hud-value-sm", isAgentEnabled ? "text-hud-success" : "text-hud-warning")}
@@ -2550,15 +2546,15 @@ export default function App() {
                               {isAgentEnabled ? "ENABLED" : "DISABLED"}
                             </div>
                           </div>
-                          <div className="rounded-xl border border-hud-line bg-hud-bg/60 px-4 py-4">
+                          <div className="rounded-lg border border-hud-line bg-hud-bg px-4 py-4">
                             <div className="hud-label text-hud-primary mb-2">STRATEGY</div>
                             <div className="hud-value-sm">{status?.strategy || "default"}</div>
                           </div>
-                          <div className="rounded-xl border border-hud-line bg-hud-bg/60 px-4 py-4">
+                          <div className="rounded-lg border border-hud-line bg-hud-bg px-4 py-4">
                             <div className="hud-label text-hud-primary mb-2">LATENCY</div>
                             <div className="hud-value-sm">{error ? "DEGRADED" : "STABLE"}</div>
                           </div>
-                          <div className="rounded-xl border border-hud-line bg-hud-bg/60 px-4 py-4">
+                          <div className="rounded-lg border border-hud-line bg-hud-bg px-4 py-4">
                             <div className="hud-label text-hud-primary mb-2">VERSION</div>
                             <div
                               className={clsx(
@@ -2613,7 +2609,7 @@ export default function App() {
               )}
             >
               <Panel
-                title="PORTFOLIO OVERVIEW"
+                title="PORTFOLIO"
                 variant={desktopPanel ? "hero" : "default"}
                 titleRight={
                   <div className="flex flex-wrap justify-end gap-2">
@@ -2637,201 +2633,146 @@ export default function App() {
                 className={clsx("overflow-hidden", desktopPanel && "h-full")}
               >
                 {account ? (
-                  <div
-                    className={clsx(
-                      "grid h-full min-h-0 gap-4",
-                      desktopPanel
-                        ? "items-start lg:grid-cols-[280px_minmax(0,1fr)] 2xl:grid-cols-[320px_minmax(0,1fr)]"
-                        : "xl:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[360px_minmax(0,1fr)]"
-                    )}
-                  >
-                    <div className="flex flex-col gap-3 min-h-0">
-                      <div className={clsx("hud-hero-card", desktopPanel && "hud-hero-card--compact")}>
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div>
-                            <div className="hud-hero-card__eyebrow">Capital State</div>
-                            <div className="hud-label text-hud-primary mb-2">Net Liquidation</div>
-                          </div>
+                  <div className="flex h-full min-h-0 flex-col gap-4">
+                    <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-3">
+                      <div className="min-w-0">
+                        <div className="hud-label">Net liquidation</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-2">
+                          <AnimatedMetricValue
+                            value={account.equity}
+                            formatter={formatCurrency}
+                            className={clsx(
+                              "font-semibold leading-none tracking-tight text-hud-text-bright",
+                              desktopPanel ? "text-[30px]" : "text-3xl md:text-4xl"
+                            )}
+                            pulseOnChange
+                          />
                           <span className={clsx("hud-hero-pill", totalPl >= 0 ? "is-positive" : "is-negative")}>
-                            {totalPlStateLabel}
+                            {formatPercent(totalPlPct)}
                           </span>
                         </div>
-                        <AnimatedMetricValue
-                          value={account.equity}
-                          formatter={formatCurrency}
-                          className={clsx(
-                            "font-semibold tracking-tight text-hud-text-bright",
-                            desktopPanel ? "text-[36px] leading-none" : "text-3xl md:text-4xl"
-                          )}
-                          pulseOnChange
-                        />
                       </div>
 
-                      {nativeShell && (
-                        <button
-                          type="button"
-                          onClick={() => setShowPortfolioDetails((current) => !current)}
-                          className="flex min-h-[52px] items-center justify-between rounded-xl border border-hud-line/60 bg-hud-bg/45 px-4 py-3 text-left text-hud-text transition-colors hover:border-hud-primary/40"
-                        >
-                          <span className="hud-label text-hud-primary">Portfolio Details</span>
-                          <svg
-                            aria-hidden="true"
-                            width="18"
-                            height="18"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            className={clsx(
-                              "transition-transform duration-200",
-                              portfolioDetailsExpanded && "rotate-180"
-                            )}
-                          >
-                            <path d="m6 9 6 6 6-6" />
-                          </svg>
-                        </button>
+                      {!nativeShell && (
+                        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
+                          <MetricInline label="Cash" value={formatCompactCurrency(account.cash)} />
+                          <MetricInline label="Buying power" value={formatCompactCurrency(account.buying_power)} />
+                          <MetricInline
+                            label="Realized"
+                            value={formatCompactCurrency(realizedPl)}
+                            valueClassName={realizedPl >= 0 ? "text-hud-success" : "text-hud-error"}
+                          />
+                          <MetricInline
+                            label="Unrealized"
+                            value={formatCompactCurrency(unrealizedPl)}
+                            valueClassName={unrealizedPl >= 0 ? "text-hud-success" : "text-hud-error"}
+                          />
+                          <MetricInline
+                            label="APY"
+                            value={rollingApy !== null ? formatPercent(rollingApy) : "--"}
+                            valueClassName={
+                              rollingApy !== null
+                                ? rollingApy >= 0
+                                  ? "text-hud-success"
+                                  : "text-hud-error"
+                                : "text-hud-text-dim"
+                            }
+                          />
+                          <MetricInline label="Positions" value={`${positions.length}/${config?.max_positions || 5}`} />
+                          <MetricInline label="Sync" value={syncTimeLabel} />
+                        </div>
                       )}
-
-                      {portfolioDetailsExpanded &&
-                        (desktopPanel ? (
-                          <div className="hud-compact-grid">
-                            <div className="hud-compact-grid__item">
-                              <div className="hud-label text-hud-primary mb-1">Cash</div>
-                              <div className="hud-compact-grid__value">{formatCompactCurrency(account.cash)}</div>
-                            </div>
-                            <div className="hud-compact-grid__item">
-                              <div className="hud-label text-hud-primary mb-1">Buying Power</div>
-                              <div className="hud-compact-grid__value">
-                                {formatCompactCurrency(account.buying_power)}
-                              </div>
-                            </div>
-                            <div className="hud-compact-grid__item">
-                              <div className="hud-label text-hud-primary mb-1">Realized</div>
-                              <div
-                                className={clsx(
-                                  "hud-compact-grid__value",
-                                  realizedPl >= 0 ? "text-hud-success" : "text-hud-error"
-                                )}
-                              >
-                                {formatCompactCurrency(realizedPl)}
-                              </div>
-                            </div>
-                            <div className="hud-compact-grid__item">
-                              <div className="hud-label text-hud-primary mb-1">Unrealized</div>
-                              <div
-                                className={clsx(
-                                  "hud-compact-grid__value",
-                                  unrealizedPl >= 0 ? "text-hud-success" : "text-hud-error"
-                                )}
-                              >
-                                {formatCompactCurrency(unrealizedPl)}
-                              </div>
-                            </div>
-                            <div className="hud-compact-grid__item">
-                              <div className="hud-label mb-1">APY</div>
-                              <div
-                                className={clsx(
-                                  "hud-compact-grid__value",
-                                  rollingApy !== null
-                                    ? rollingApy >= 0
-                                      ? "text-hud-success"
-                                      : "text-hud-error"
-                                    : "text-hud-text-dim"
-                                )}
-                              >
-                                {rollingApy !== null ? formatPercent(rollingApy) : "CALC..."}
-                              </div>
-                            </div>
-                            <div className="hud-compact-grid__item">
-                              <div className="hud-label mb-1">Open Risk</div>
-                              <div className="hud-compact-grid__value">
-                                {positions.length}/{config?.max_positions || 5}
-                              </div>
-                            </div>
-                            <div className="hud-compact-grid__item hud-compact-grid__item--wide">
-                              <div className="hud-label mb-1">Sync</div>
-                              <div className="hud-compact-grid__value">{syncTimeLabel}</div>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="hud-kpi-grid grid-cols-2">
-                              <div className="hud-kpi-card">
-                                <div className="hud-label text-hud-primary mb-1">Cash</div>
-                                <div className="hud-kpi-card__value hud-kpi-card__value--lg">
-                                  {formatCompactCurrency(account.cash)}
-                                </div>
-                              </div>
-                              <div className="hud-kpi-card">
-                                <div className="hud-label text-hud-primary mb-1">Buying Power</div>
-                                <div className="hud-kpi-card__value hud-kpi-card__value--lg">
-                                  {formatCompactCurrency(account.buying_power)}
-                                </div>
-                              </div>
-                              <div className="hud-kpi-card">
-                                <div className="hud-label text-hud-primary mb-1">Realized</div>
-                                <div
-                                  className={clsx(
-                                    "hud-kpi-card__value hud-kpi-card__value--lg",
-                                    realizedPl >= 0 ? "text-hud-success" : "text-hud-error"
-                                  )}
-                                >
-                                  {formatCompactCurrency(realizedPl)}
-                                </div>
-                              </div>
-                              <div className="hud-kpi-card">
-                                <div className="hud-label text-hud-primary mb-1">Unrealized</div>
-                                <div
-                                  className={clsx(
-                                    "hud-kpi-card__value hud-kpi-card__value--lg",
-                                    unrealizedPl >= 0 ? "text-hud-success" : "text-hud-error"
-                                  )}
-                                >
-                                  {formatCompactCurrency(unrealizedPl)}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="hud-kpi-grid grid-cols-1 sm:grid-cols-3">
-                              <div className="hud-kpi-card hud-kpi-card--quiet">
-                                <div className="hud-label mb-1">APY</div>
-                                <div
-                                  className={clsx(
-                                    "hud-kpi-card__value",
-                                    rollingApy !== null
-                                      ? rollingApy >= 0
-                                        ? "text-hud-success"
-                                        : "text-hud-error"
-                                      : "text-hud-text-dim"
-                                  )}
-                                >
-                                  {rollingApy !== null ? formatPercent(rollingApy) : "CALC..."}
-                                </div>
-                              </div>
-                              <div className="hud-kpi-card hud-kpi-card--quiet">
-                                <div className="hud-label mb-1">Open Risk</div>
-                                <div className="hud-kpi-card__value">
-                                  {positions.length}/{config?.max_positions || 5}
-                                </div>
-                              </div>
-                              <div className="hud-kpi-card hud-kpi-card--quiet">
-                                <div className="hud-label mb-1">Sync</div>
-                                <div className="hud-kpi-card__value">{syncTimeLabel}</div>
-                              </div>
-                            </div>
-                          </>
-                        ))}
                     </div>
 
-                    <div className="min-h-0 h-full flex flex-col gap-3">
-                      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-                        <div>
-                          <div className="hud-section-kicker">Trajectory</div>
-                          <div className="hud-label text-hud-primary mb-1">Equity Curve</div>
+                    {nativeShell && (
+                      <button
+                        type="button"
+                        onClick={() => setShowPortfolioDetails((current) => !current)}
+                        className="flex min-h-[48px] items-center justify-between rounded-lg border border-hud-line bg-hud-bg px-4 py-3 text-left transition-colors hover:border-hud-border"
+                      >
+                        <span className="hud-label">Portfolio details</span>
+                        <svg
+                          aria-hidden="true"
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className={clsx(
+                            "text-hud-text-dim transition-transform duration-200",
+                            portfolioDetailsExpanded && "rotate-180"
+                          )}
+                        >
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                      </button>
+                    )}
+
+                    {nativeShell && portfolioDetailsExpanded && (
+                      <div className="hud-kpi-grid grid-cols-2">
+                        <div className="hud-kpi-card">
+                          <div className="hud-label mb-1">Cash</div>
+                          <div className="hud-kpi-card__value hud-kpi-card__value--lg">
+                            {formatCompactCurrency(account.cash)}
+                          </div>
                         </div>
-                        <div className="hidden md:flex items-center gap-4">
+                        <div className="hud-kpi-card">
+                          <div className="hud-label mb-1">Buying power</div>
+                          <div className="hud-kpi-card__value hud-kpi-card__value--lg">
+                            {formatCompactCurrency(account.buying_power)}
+                          </div>
+                        </div>
+                        <div className="hud-kpi-card">
+                          <div className="hud-label mb-1">Realized</div>
+                          <div
+                            className={clsx(
+                              "hud-kpi-card__value hud-kpi-card__value--lg",
+                              realizedPl >= 0 ? "text-hud-success" : "text-hud-error"
+                            )}
+                          >
+                            {formatCompactCurrency(realizedPl)}
+                          </div>
+                        </div>
+                        <div className="hud-kpi-card">
+                          <div className="hud-label mb-1">Unrealized</div>
+                          <div
+                            className={clsx(
+                              "hud-kpi-card__value hud-kpi-card__value--lg",
+                              unrealizedPl >= 0 ? "text-hud-success" : "text-hud-error"
+                            )}
+                          >
+                            {formatCompactCurrency(unrealizedPl)}
+                          </div>
+                        </div>
+                        <div className="hud-kpi-card hud-kpi-card--quiet">
+                          <div className="hud-label mb-1">APY</div>
+                          <div
+                            className={clsx(
+                              "hud-kpi-card__value",
+                              rollingApy !== null
+                                ? rollingApy >= 0
+                                  ? "text-hud-success"
+                                  : "text-hud-error"
+                                : "text-hud-text-dim"
+                            )}
+                          >
+                            {rollingApy !== null ? formatPercent(rollingApy) : "--"}
+                          </div>
+                        </div>
+                        <div className="hud-kpi-card hud-kpi-card--quiet">
+                          <div className="hud-label mb-1">Sync</div>
+                          <div className="hud-kpi-card__value">{syncTimeLabel}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex min-h-0 flex-1 flex-col gap-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="hud-label">Equity curve</div>
+                        <div className="hidden items-center gap-4 md:flex">
                           <MetricInline label="Portfolio" value={formatCompactCurrency(account.portfolio_value)} />
                           <MetricInline
                             label="Exposure"
@@ -2874,6 +2815,7 @@ export default function App() {
             </div>
 
             {desktopPanel && <div className="min-h-0 h-full lg:col-span-5">{positionsPanel}</div>}
+            {!desktopPanel && desktopShell && <div className="min-h-0 lg:col-span-4">{positionsPanel}</div>}
           </motion.div>
 
           <motion.div
@@ -2885,7 +2827,7 @@ export default function App() {
               desktopPanel && "min-h-0 h-full gap-3 auto-rows-fr"
             )}
           >
-            {!desktopPanel && <div className="col-span-4 md:col-span-4 lg:col-span-4">{positionsPanel}</div>}
+            {nativeShell && <div className="col-span-4">{positionsPanel}</div>}
 
             <div className={clsx("col-span-4 md:col-span-8 lg:col-span-3", desktopPanel && "min-h-0 h-full")}>
               <Panel

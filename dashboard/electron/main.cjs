@@ -5,6 +5,8 @@ const path = require("node:path");
 
 const PANEL_WIDTH = 1660;
 const PANEL_HEIGHT = 980;
+const CAPTURE_OUT = process.env.MAHORAGA_SENTINEL_CAPTURE_OUT || "";
+const CAPTURE_DELAY_MS = Number(process.env.MAHORAGA_SENTINEL_CAPTURE_DELAY_MS || 8000);
 const APP_USER_MODEL_ID = "jp.mahoraga.next.panel";
 const RESUME_RELOAD_DELAY_MS = 1200;
 const APP_TITLE = "MAHORAGA-Next SENTINEL";
@@ -400,6 +402,19 @@ function createMainWindow() {
   window.webContents.on("did-finish-load", () => {
     if (!window.isDestroyed()) {
       window.webContents.send("mahoraga:lifecycle", { type: "renderer-ready" });
+    }
+
+    if (CAPTURE_OUT && !window.isDestroyed()) {
+      setTimeout(async () => {
+        try {
+          const image = await window.webContents.capturePage();
+          await writeFile(CAPTURE_OUT, image.toPNG());
+          console.log(`[capture] wrote ${CAPTURE_OUT}`);
+        } catch (captureError) {
+          console.error("[capture] failed", captureError);
+        }
+        app.quit();
+      }, CAPTURE_DELAY_MS);
     }
   });
 
