@@ -256,7 +256,7 @@ describe("Alpaca Market Data Provider", () => {
     };
 
     it("fetches crypto snapshot", async () => {
-      mockClient.dataRequest.mockResolvedValueOnce({ "BTC/USD": mockCryptoSnapshot });
+      mockClient.dataRequest.mockResolvedValueOnce({ snapshots: { "BTC/USD": mockCryptoSnapshot } });
 
       const snapshot = await provider.getCryptoSnapshot("BTC/USD");
 

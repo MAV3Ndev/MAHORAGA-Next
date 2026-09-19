@@ -50,7 +50,7 @@ interface AlpacaSnapshot {
 }
 
 interface AlpacaCryptoSnapshotsResponse {
-  [symbol: string]: AlpacaSnapshot;
+  snapshots: Record<string, AlpacaSnapshot>;
 }
 
 function parseBar(raw: AlpacaBar): Bar {
@@ -214,7 +214,7 @@ export class AlpacaMarketDataProvider implements MarketDataProvider {
       { symbols: symbol }
     );
 
-    const snapshot = response?.[symbol] ?? response?.[symbol.toUpperCase()];
+    const snapshot = response?.snapshots?.[symbol] ?? response?.snapshots?.[symbol.toUpperCase()];
     if (!snapshot) {
       throw new Error(`No crypto snapshot data for ${symbol}`);
     }
