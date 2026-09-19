@@ -29,6 +29,21 @@ export interface DesktopUpdateEvent {
   message?: string
 }
 
+export type SocialLoginProvider = 'reddit' | 'twitter'
+
+export interface SocialLoginRequest {
+  provider: SocialLoginProvider
+  url: string
+  cookieUrls: string[]
+  requiredCookies: string[]
+}
+
+export interface SocialLoginResult {
+  status: 'ok' | 'cancelled' | 'unsupported' | 'error'
+  cookies?: string
+  message?: string
+}
+
 interface DesktopBridge {
   loadConnectionSettings: () => Promise<ConnectionSettings | null>
   saveConnectionSettings: (settings: ConnectionSettings) => Promise<ConnectionSettings>
@@ -41,9 +56,14 @@ interface DesktopBridge {
   checkForUpdates: (input?: { silent?: boolean }) => Promise<DesktopUpdateEvent>
   installUpdate: () => Promise<DesktopUpdateEvent>
   openExternal: (url: string) => Promise<void>
+  openSocialLogin?: (input: SocialLoginRequest) => Promise<SocialLoginResult>
   notify: (payload: { title: string; body: string }) => Promise<boolean>
   onUpdateEvent: (listener: (event: DesktopUpdateEvent) => void) => () => void
   onLifecycleEvent: (listener: (event: DesktopLifecycleEvent) => void) => () => void
+}
+
+interface SocialLoginPlugin {
+  openLogin: (input: SocialLoginRequest) => Promise<{ cookies?: string; cancelled?: boolean }>
 }
 
 interface NativeUpdatePlugin {
@@ -65,6 +85,20 @@ declare global {
 const API_URL_KEY = 'mahoraga_connection_url'
 const TOKEN_KEY = 'mahoraga_api_token'
 const sentinelUpdatePlugin = registerPlugin<NativeUpdatePlugin>('SentinelUpdate')
+const socialLoginPlugin = registerPlugin<SocialLoginPlugin>('SocialLogin')
+
+const SOCIAL_LOGIN_TARGETS: Record<SocialLoginProvider, Omit<SocialLoginRequest, 'provider'>> = {
+  reddit: {
+    url: 'https://www.reddit.com/login',
+    cookieUrls: ['https://www.reddit.com', 'https://reddit.com', 'https://old.reddit.com'],
+    requiredCookies: ['reddit_session', 'token_v2'],
+  },
+  twitter: {
+    url: 'https://x.com/login',
+    cookieUrls: ['https://x.com', 'https://twitter.com', 'https://mobile.twitter.com'],
+    requiredCookies: ['auth_token'],
+  },
+}
 
 type ForcedShell = 'native' | 'desktop' | null
 
@@ -371,4 +405,28 @@ export function subscribeDesktopLifecycle(
   listener: (event: DesktopLifecycleEvent) => void,
 ): (() => void) | undefined {
   return getDesktopBridge()?.onLifecycleEvent(listener)
+}
+
+export function isSocialLoginSupported(): boolean {
+  if (getForcedShell()) return false
+  if (getDesktopBridge()?.openSocialLogin) return true
+  return isNativeShell()
+}
+
+export async function openSocialLogin(provider: SocialLoginProvider): Promise<SocialLoginResult> {
+  const request: SocialLoginRequest = { provider, ...SOCIAL_LOGIN_TARGETS[provider] }
+
+  const desktop = getDesktopBridge()
+  if (desktop?.openSocialLogin) {
+    return desktop.openSocialLogin(request)
+  }
+
+  if (isNativeShell() && !getForcedShell()) {
+    const result = await socialLoginPlugin.openLogin(request)
+    if (result.cancelled) return { status: 'cancelled' }
+    if (result.cookies) return { status: 'ok', cookies: result.cookies }
+    return { status: 'error', message: 'No session cookies were captured.' }
+  }
+
+  return { status: 'unsupported' }
 }

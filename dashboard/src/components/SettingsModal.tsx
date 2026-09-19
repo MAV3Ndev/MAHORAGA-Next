@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { ConnectionSettings, DesktopUpdateEvent } from "../lib/connection";
-import { getResponseError, normalizeApiUrl, requestAgent } from "../lib/connection";
+import type { ConnectionSettings, DesktopUpdateEvent, SocialLoginProvider } from "../lib/connection";
+import { getResponseError, isSocialLoginSupported, normalizeApiUrl, openSocialLogin, requestAgent } from "../lib/connection";
 import type { Config } from "../types";
 import { Panel } from "./Panel";
 import { UpdateControls } from "./UpdateControls";
@@ -211,7 +211,10 @@ function CookieAccountsEditor({
   accounts,
   legacyCookies,
   placeholder,
+  loginBusy,
+  loginSupported,
   onAdd,
+  onBrowserLogin,
   onChange,
   onRemove,
 }: {
@@ -220,7 +223,10 @@ function CookieAccountsEditor({
   accounts?: Array<{ label?: string; cookies: string }>;
   legacyCookies?: string;
   placeholder: string;
+  loginBusy?: boolean;
+  loginSupported?: boolean;
   onAdd: () => void;
+  onBrowserLogin?: () => void;
   onChange: (index: number, value: string) => void;
   onRemove: (index: number) => void;
 }) {
@@ -230,9 +236,22 @@ function CookieAccountsEditor({
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="hud-label">Cookie Accounts</span>
-        <button type="button" className="hud-button hud-button-muted h-7 min-h-0 px-3 py-1 text-[9px]" onClick={onAdd}>
-          Add Account
-        </button>
+        <div className="flex items-center gap-2">
+          {onBrowserLogin && (
+            <button
+              type="button"
+              className="hud-button h-7 min-h-0 px-3 py-1 text-[9px]"
+              onClick={onBrowserLogin}
+              disabled={loginBusy || !loginSupported}
+              title={loginSupported ? "Sign in inside the app and capture session cookies" : "Available in the Windows and Android apps"}
+            >
+              {loginBusy ? "Waiting for login..." : "Browser Login"}
+            </button>
+          )}
+          <button type="button" className="hud-button hud-button-muted h-7 min-h-0 px-3 py-1 text-[9px]" onClick={onAdd}>
+            Add Account
+          </button>
+        </div>
       </div>
       {editableAccounts.length === 0 ? (
         <div className="border border-dashed border-hud-line/40 px-3 py-2 text-[10px] text-hud-text-dim">
@@ -395,6 +414,8 @@ export function SettingsModal({
   const [testingReddit, setTestingReddit] = useState(false);
   const [redditTestMessage, setRedditTestMessage] = useState<string | null>(null);
   const [redditTestError, setRedditTestError] = useState<string | null>(null);
+  const [loginBusy, setLoginBusy] = useState<SocialLoginProvider | null>(null);
+  const socialLoginSupported = isSocialLoginSupported();
   const [apiUrl, setApiUrl] = useState(connection.apiUrl);
   const [apiToken, setApiToken] = useState(connection.bearerToken);
   const llmProvider = localConfig.llm_provider || "openai-raw";
@@ -616,6 +637,36 @@ export function SettingsModal({
       setRedditTestError(error instanceof Error ? error.message : "Reddit cookie test failed");
     } finally {
       setTestingReddit(false);
+    }
+  };
+
+  const handleBrowserLogin = async (provider: SocialLoginProvider) => {
+    setLoginBusy(provider);
+    const setMessage = provider === "twitter" ? setTwitterTestMessage : setRedditTestMessage;
+    const setError = provider === "twitter" ? setTwitterTestError : setRedditTestError;
+    setMessage(null);
+    setError(null);
+
+    try {
+      const result = await openSocialLogin(provider);
+      if (result.status === "ok" && result.cookies) {
+        const accounts =
+          provider === "twitter"
+            ? getEditableCookieAccounts(localConfig.twitter_cookie_accounts, localConfig.twitter_cookies)
+            : getEditableCookieAccounts(localConfig.reddit_cookie_accounts, localConfig.reddit_cookies);
+        const update =
+          provider === "twitter" ? updateTwitterCookieAccounts : updateRedditCookieAccounts;
+        update([...accounts, { label: `${provider}-app-${accounts.length + 1}`, cookies: result.cookies }]);
+        setMessage("Session captured — run the test, then Save Configuration.");
+      } else if (result.status === "unsupported") {
+        setError("Browser login is only available in the Windows and Android apps.");
+      } else if (result.status === "error") {
+        setError(result.message || "Failed to capture session cookies.");
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Browser login failed");
+    } finally {
+      setLoginBusy(null);
     }
   };
 
@@ -2919,7 +2970,10 @@ export function SettingsModal({
                       accounts={localConfig.twitter_cookie_accounts}
                       legacyCookies={localConfig.twitter_cookies}
                       placeholder="auth_token=...; ct0=..."
+                      loginBusy={loginBusy === "twitter"}
+                      loginSupported={socialLoginSupported}
                       onAdd={handleAddTwitterCookieAccount}
+                      onBrowserLogin={() => void handleBrowserLogin("twitter")}
                       onChange={handleTwitterCookieAccountChange}
                       onRemove={handleRemoveTwitterCookieAccount}
                     />
@@ -2985,7 +3039,10 @@ export function SettingsModal({
                       accounts={localConfig.reddit_cookie_accounts}
                       legacyCookies={localConfig.reddit_cookies}
                       placeholder="reddit_session=...; token_v2=..."
+                      loginBusy={loginBusy === "reddit"}
+                      loginSupported={socialLoginSupported}
                       onAdd={handleAddRedditCookieAccount}
+                      onBrowserLogin={() => void handleBrowserLogin("reddit")}
                       onChange={handleRedditCookieAccountChange}
                       onRemove={handleRemoveRedditCookieAccount}
                     />

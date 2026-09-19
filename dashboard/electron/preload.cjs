@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("mahoragaDesktop", {
   checkForUpdates: (input) => ipcRenderer.invoke("mahoraga:update:check", input),
   installUpdate: () => ipcRenderer.invoke("mahoraga:update:install"),
   openExternal: (url) => ipcRenderer.invoke("mahoraga:open-external", url),
+  openSocialLogin: (input) => ipcRenderer.invoke("mahoraga:social-login", input),
   notify: (payload) => ipcRenderer.invoke("mahoraga:notify", payload),
   onUpdateEvent: (listener) => {
     const wrappedListener = (_event, payload) => listener(payload);

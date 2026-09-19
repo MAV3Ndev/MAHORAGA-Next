@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, Notification, powerMonitor, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, Menu, Notification, powerMonitor, session, shell } = require("electron");
 const { createWriteStream } = require("node:fs");
 const { mkdir, readFile, writeFile } = require("node:fs/promises");
 const path = require("node:path");
@@ -327,6 +327,119 @@ async function requestAgent(input) {
   };
 }
 
+const SOCIAL_LOGIN_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36";
+const SOCIAL_LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
+
+function cookieDomainMatches(cookieDomain, hostname) {
+  const stripped = String(cookieDomain || "").replace(/^\./, "").toLowerCase();
+  const host = String(hostname || "").toLowerCase();
+  return stripped === host || host.endsWith(`.${stripped}`) || stripped.endsWith(`.${host}`);
+}
+
+async function collectSocialCookies(loginSession, cookieUrls, requiredCookies) {
+  const hostnames = cookieUrls
+    .map((url) => {
+      try {
+        return new URL(url).hostname;
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+
+  const cookies = await loginSession.cookies.get({});
+  const relevant = new Map();
+  for (const cookie of cookies) {
+    if (!hostnames.some((hostname) => cookieDomainMatches(cookie.domain, hostname))) continue;
+    if (!relevant.has(cookie.name)) relevant.set(cookie.name, cookie.value);
+  }
+
+  const ready = requiredCookies.some((name) => relevant.has(name));
+  if (!ready) return null;
+  return [...relevant.entries()].map(([name, value]) => `${name}=${value}`).join("; ");
+}
+
+function openSocialLoginWindow(input) {
+  return new Promise((resolve) => {
+    const provider = String(input?.provider || "account");
+    const loginUrl = String(input?.url || "");
+    const cookieUrls = Array.isArray(input?.cookieUrls) ? input.cookieUrls.map(String) : [];
+    const requiredCookies = Array.isArray(input?.requiredCookies) ? input.requiredCookies.map(String) : [];
+
+    if (!/^https:\/\//.test(loginUrl) || cookieUrls.length === 0 || requiredCookies.length === 0) {
+      resolve({ status: "error", message: "Invalid social login request." });
+      return;
+    }
+
+    const loginSession = session.fromPartition(`social-login-${provider}-${Date.now()}`);
+    loginSession.setUserAgent(SOCIAL_LOGIN_USER_AGENT);
+
+    const loginWindow = new BrowserWindow({
+      width: 520,
+      height: 860,
+      parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+      autoHideMenuBar: true,
+      backgroundColor: "#0b0d12",
+      title: `Sign in — ${provider}`,
+      icon: APP_ICON_PATH,
+      webPreferences: {
+        session: loginSession,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    loginWindow.setMenuBarVisibility(false);
+
+    let settled = false;
+    let poller = null;
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (poller) clearInterval(poller);
+      const windowRef = loginWindow;
+      const done = async () => {
+        try {
+          await loginSession.clearStorageData();
+        } catch {
+          // Best effort cleanup only.
+        }
+        resolve(result);
+      };
+      if (!windowRef.isDestroyed()) {
+        windowRef.once("closed", () => void done());
+        windowRef.destroy();
+      } else {
+        void done();
+      }
+    };
+
+    loginWindow.on("closed", () => finish({ status: "cancelled" }));
+
+    loginWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (/^https:\/\//.test(url)) void loginWindow.loadURL(url);
+      return { action: "deny" };
+    });
+
+    const checkCookies = () => {
+      collectSocialCookies(loginSession, cookieUrls, requiredCookies)
+        .then((cookies) => {
+          if (cookies) finish({ status: "ok", cookies });
+        })
+        .catch(() => {});
+    };
+
+    poller = setInterval(checkCookies, 800);
+    loginWindow.webContents.on("did-navigate", checkCookies);
+    loginWindow.webContents.on("did-navigate-in-page", checkCookies);
+    setTimeout(() => finish({ status: "cancelled", message: "Login timed out." }), SOCIAL_LOGIN_TIMEOUT_MS);
+
+    void loginWindow.loadURL(loginUrl);
+  });
+}
+
 function createMainWindow() {
   const window = new BrowserWindow({
     width: PANEL_WIDTH,
@@ -464,6 +577,7 @@ app.whenReady().then(() => {
   ipcMain.handle("mahoraga:open-external", async (_event, url) => {
     await shell.openExternal(url);
   });
+  ipcMain.handle("mahoraga:social-login", async (_event, input) => openSocialLoginWindow(input));
   ipcMain.handle("mahoraga:notify", async (_event, payload) => {
     if (!Notification.isSupported()) {
       return false;
