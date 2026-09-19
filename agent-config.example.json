@@ -92,6 +92,8 @@
   "llm_model": "gpt-4o-mini",
   "llm_analyst_model": "gpt-4o",
   "llm_provider": "openai-raw",
+  "analyst_engine": "llm",
+  "typesafe_api_key": "",
   "llm_min_hold_minutes": 5,
   "recent_sell_cooldown_hours": 72,
   "defensive_sell_cooldown_hours": 168,

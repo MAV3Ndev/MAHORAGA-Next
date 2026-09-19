@@ -36,9 +36,11 @@ export const AgentConfigSchema = z
     stale_social_volume_decay: z.number().min(0).max(1),
 
     llm_provider: z.enum(["openai-raw", "ai-sdk", "cloudflare-gateway"]),
+    analyst_engine: z.enum(["llm", "jev"]).default("llm"),
     llm_model: z.string().min(1),
     llm_analyst_model: z.string().min(1),
     llm_api_key: z.string().trim().max(2048),
+    typesafe_api_key: z.string().trim().max(2048).default(""),
     openai_base_url: z.string().max(500),
     anthropic_base_url: z.string().trim().max(500),
     llm_min_hold_minutes: z.number().min(0).max(1440),

@@ -37,6 +37,11 @@
 	// - DEEPSEEK_API_KEY (for ai-sdk with DeepSeek models)
 	// - AI_GATEWAY_API_KEY (for vercel-gateway unified access)
 	//
+	// TypeSafe / Jev (System One decision model, used when agent config analyst_engine = "jev"):
+	// - TYPESAFE_API_KEY (or set typesafe_api_key in agent config via Sentinel; config wins)
+	// - TYPESAFE_BASE_URL (optional override, default https://api.typesafe.ai)
+	// - TYPESAFE_MODEL (optional, default "jev-latest")
+	//
 	// Optional:
 	// - ALPACA_PAPER ("true" for paper trading)
 	// - REDDIT_CLIENT_ID

@@ -113,6 +113,22 @@ describe("AgentConfigSchema", () => {
       }
     });
 
+    it("defaults analyst_engine to llm and accepts jev", () => {
+      const withoutEngine = AgentConfigSchema.safeParse(createValidConfig());
+      expect(withoutEngine.success).toBe(true);
+      if (withoutEngine.success) {
+        expect(withoutEngine.data.analyst_engine).toBe("llm");
+      }
+
+      const withJev = AgentConfigSchema.safeParse({ ...createValidConfig(), analyst_engine: "jev" });
+      expect(withJev.success).toBe(true);
+      if (withJev.success) {
+        expect(withJev.data.analyst_engine).toBe("jev");
+      }
+
+      expect(AgentConfigSchema.safeParse({ ...createValidConfig(), analyst_engine: "invalid" }).success).toBe(false);
+    });
+
     it("accepts empty ticker_blacklist", () => {
       const config = { ...createValidConfig(), ticker_blacklist: [] };
       const result = AgentConfigSchema.safeParse(config);

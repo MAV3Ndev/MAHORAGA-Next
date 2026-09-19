@@ -74,6 +74,8 @@ import { createAlpacaProviders } from "../providers/alpaca";
 import { type LLMEndpointProbeResult, probeLLMEndpoint } from "../providers/llm/diagnostics";
 import { createLLMProvider } from "../providers/llm/factory";
 import { computeTechnicals } from "../providers/technicals";
+import { analyzeSignalsWithJev } from "../providers/typesafe/analyst";
+import { createTypeSafeClientFromEnv, type TypeSafeClient } from "../providers/typesafe/client";
 import type { Account, LLMProvider, MarketClock, Order, Position } from "../providers/types";
 import type { AgentConfig } from "../schemas/agent-config";
 import { safeValidateAgentConfig } from "../schemas/agent-config";
@@ -131,6 +133,7 @@ interface TradeDecisionLogParams {
 export class MahoragaHarness extends DurableObject<Env> {
   private state: AgentState = createInitialAgentState(activeStrategy.defaultConfig);
   private _llm: LLMProvider | null = null;
+  private _typesafe: TypeSafeClient | null = null;
   private currentDecisionCycleId: string | null = null;
   private lastLLMReinitAttemptAt = 0;
   private _etDayFormatter: Intl.DateTimeFormat | null = null;
@@ -209,6 +212,9 @@ export class MahoragaHarness extends DurableObject<Env> {
       ANTHROPIC_BASE_URL: anthropicBaseUrl || undefined,
     };
     this.applyDashboardLlmApiKey(effectiveEnv, provider, model);
+
+    const typesafeApiKey = this.state.config.typesafe_api_key?.trim() || effectiveEnv.TYPESAFE_API_KEY;
+    this._typesafe = createTypeSafeClientFromEnv({ ...effectiveEnv, TYPESAFE_API_KEY: typesafeApiKey });
 
     this._llm = createLLMProvider(effectiveEnv);
     if (this._llm) {
@@ -1659,7 +1665,19 @@ export class MahoragaHarness extends DurableObject<Env> {
     market_summary: string;
     high_conviction: string[];
   }> {
-    if (!this._llm || !activeStrategy.prompts.analyzeSignals || signals.length === 0) {
+    if (signals.length === 0) {
+      return { recommendations: [], market_summary: "No signals to analyze", high_conviction: [] };
+    }
+
+    if (this.state.config.analyst_engine === "jev") {
+      const jevResult = await this.callJevAnalyst(signals, positions, account);
+      if (jevResult) {
+        return jevResult;
+      }
+      // Jev not configured — fall through to the LLM path if available.
+    }
+
+    if (!this._llm || !activeStrategy.prompts.analyzeSignals) {
       return { recommendations: [], market_summary: "No signals to analyze", high_conviction: [] };
     }
 
@@ -1695,6 +1713,60 @@ export class MahoragaHarness extends DurableObject<Env> {
     } catch (error) {
       this.log("Analyst", "error", { message: String(error) });
       return { recommendations: [], market_summary: `Analysis failed: ${error}`, high_conviction: [] };
+    }
+  }
+
+  /**
+   * Jev (TypeSafe System One) analyst path. Returns null when no TypeSafe API
+   * key is configured (agent config typesafe_api_key or TYPESAFE_API_KEY env)
+   * so the caller can fall back to the LLM path.
+   */
+  private async callJevAnalyst(
+    signals: Signal[],
+    positions: Position[],
+    account: Account
+  ): Promise<{
+    recommendations: Array<{
+      action: "BUY" | "SELL" | "HOLD";
+      symbol: string;
+      confidence: number;
+      reasoning: string;
+      suggested_size_pct?: number;
+    }>;
+    market_summary: string;
+    high_conviction: string[];
+  } | null> {
+    const client = this._typesafe;
+    if (!client) {
+      this.log("Analyst", "jev_not_configured", { reason: "No TypeSafe API key configured" });
+      return null;
+    }
+
+    try {
+      const result = await analyzeSignalsWithJev(client, {
+        signals,
+        positions,
+        account,
+        research: this.state.signalResearch,
+        positionEntries: this.state.positionEntries,
+        config: this.state.config,
+      });
+
+      this.trackLLMCost(result.model, result.usage.input_tokens, result.usage.output_tokens);
+      this.log("Analyst", "analysis_complete", {
+        engine: "jev",
+        model: result.model,
+        recommendations: result.recommendations.length,
+      });
+
+      return {
+        recommendations: result.recommendations,
+        market_summary: result.market_summary,
+        high_conviction: result.high_conviction,
+      };
+    } catch (error) {
+      this.log("Analyst", "error", { engine: "jev", message: String(error) });
+      return { recommendations: [], market_summary: `Jev analysis failed: ${error}`, high_conviction: [] };
     }
   }
 

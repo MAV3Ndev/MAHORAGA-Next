@@ -130,9 +130,11 @@ export interface Config {
   adaptive_performance_min_trades?: number;
   adaptive_performance_min_win_rate?: number;
   llm_provider?: "openai-raw" | "ai-sdk" | "cloudflare-gateway";
+  analyst_engine?: "llm" | "jev";
   llm_model: string;
   llm_analyst_model?: string;
   llm_api_key?: string;
+  typesafe_api_key?: string;
   openai_base_url?: string;
   anthropic_base_url?: string;
   starting_equity?: number;

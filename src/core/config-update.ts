@@ -36,6 +36,10 @@ export function normalizeAgentConfigUpdate(update: AgentConfigUpdate): Partial<A
     normalized.llm_api_key = update.llm_api_key.trim();
   }
 
+  if (typeof update.typesafe_api_key === "string") {
+    normalized.typesafe_api_key = update.typesafe_api_key.trim();
+  }
+
   if (typeof update.discord_daily_report_time === "string") {
     normalized.discord_daily_report_time = update.discord_daily_report_time.trim();
   }

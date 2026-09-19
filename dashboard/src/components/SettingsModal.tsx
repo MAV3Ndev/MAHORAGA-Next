@@ -356,6 +356,8 @@ const CONFIG_KEY_TABS: Partial<Record<keyof Config, SettingsTab>> = {
   reddit_user_agent: "system",
   alpha_vantage_api_key: "system",
   llm_api_key: "ai",
+  typesafe_api_key: "ai",
+  analyst_engine: "ai",
   anthropic_base_url: "ai",
 };
 
@@ -2343,6 +2345,41 @@ export function SettingsModal({
                         "Uses CLOUDFLARE_AI_GATEWAY_* env vars via Cloudflare AI Gateway /compat."}
                     </p>
                   </div>
+                  <div>
+                    <label className="hud-label block mb-1">Analyst Engine</label>
+                    <select
+                      className="hud-input w-full"
+                      value={localConfig.analyst_engine || "llm"}
+                      onChange={(e) => handleChange("analyst_engine", e.target.value as Config["analyst_engine"])}
+                    >
+                      <option value="llm">LLM (chat completion)</option>
+                      <option value="jev">Jev (TypeSafe System One)</option>
+                    </select>
+                    <p className="text-[9px] text-hud-text-dim mt-1">
+                      {localConfig.analyst_engine === "jev"
+                        ? "Uses TypeSafe Jev for typed BUY/SELL/HOLD judgments. Falls back to the LLM provider when no API key is configured."
+                        : "Uses the configured LLM provider's free-form JSON analyst prompt."}
+                    </p>
+                  </div>
+                  {localConfig.analyst_engine === "jev" && (
+                    <div>
+                      <label className="hud-label block mb-1" htmlFor="typesafe-api-key">
+                        TypeSafe API Key
+                      </label>
+                      <input
+                        id="typesafe-api-key"
+                        type="password"
+                        className="hud-input w-full"
+                        value={localConfig.typesafe_api_key || ""}
+                        onChange={(e) => handleChange("typesafe_api_key", e.target.value)}
+                        placeholder="ts-..."
+                      />
+                      <p className="text-[9px] text-hud-text-dim mt-1">
+                        Stored in agent config and sent to api.typesafe.ai. Overrides the TYPESAFE_API_KEY env var when
+                        set.
+                      </p>
+                    </div>
+                  )}
                   {showLlmApiKey && (
                     <div>
                       <label className="hud-label block mb-1" htmlFor="llm-api-key">
