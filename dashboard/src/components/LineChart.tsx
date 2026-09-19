@@ -178,12 +178,28 @@ export function LineChart({
   const [isPulsing, setIsPulsing] = useState(false)
   const [animationVersion, setAnimationVersion] = useState(0)
   const svgRef = useRef<SVGSVGElement>(null)
+  const shellRef = useRef<HTMLDivElement>(null)
+  const [shellSize, setShellSize] = useState<{ width: number; height: number } | null>(null)
   const hasMountedRef = useRef(false)
 
   const resolvedHeight = height ?? 200
-  const viewBoxWidth = CHART_VIEWBOX_WIDTH
-  const resolvedViewBoxHeight = viewBoxHeight ?? (typeof resolvedHeight === 'number' ? resolvedHeight : 320)
-  const viewBoxHeightValue = resolvedViewBoxHeight
+
+  useEffect(() => {
+    const element = shellRef.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect
+      if (!rect || rect.width < 16 || rect.height < 16) return
+      setShellSize({ width: rect.width, height: rect.height })
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
+  const viewBoxWidth = Math.round(shellSize?.width ?? CHART_VIEWBOX_WIDTH)
+  const viewBoxHeightValue = Math.round(
+    shellSize?.height ?? viewBoxHeight ?? (typeof resolvedHeight === 'number' ? resolvedHeight : 320),
+  )
   const padding = { top: 18, right: 8, bottom: 34, left: 78 }
   const chartWidth = viewBoxWidth - padding.left - padding.right
   const chartHeight = viewBoxHeightValue - padding.top - padding.bottom
@@ -269,7 +285,7 @@ export function LineChart({
     : []
 
   return (
-    <div className="hud-chart-shell w-full" style={{ height: resolvedHeight }}>
+    <div ref={shellRef} className="hud-chart-shell w-full" style={{ height: resolvedHeight }}>
       {updateEffect === 'pulse' && (
         <motion.div
           aria-hidden
@@ -387,11 +403,10 @@ export function LineChart({
                 strokeWidth={2.2}
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                opacity={0.94}
                 vectorEffect="non-scaling-stroke"
-                initial={animated ? { pathLength: 0 } : undefined}
-                animate={{ pathLength: 1 }}
-                transition={{ duration: 1.2, ease: [0.25, 0.46, 0.45, 0.94] }}
+                initial={animated ? { opacity: 0 } : undefined}
+                animate={{ opacity: 0.94 }}
+                transition={{ duration: 0.6 }}
               />
 
               {shouldRenderTrace && (
@@ -563,6 +578,8 @@ export const PositionTimelineChart = memo(function PositionTimelineChart({
   const [hoveredSeries, setHoveredSeries] = useState<number | null>(null)
   const [isPulsing, setIsPulsing] = useState(false)
   const hasMountedRef = useRef(false)
+  const shellRef = useRef<HTMLDivElement>(null)
+  const [shellSize, setShellSize] = useState<{ width: number; height: number } | null>(null)
 
   useEffect(() => {
     if (updateToken === undefined) return
@@ -577,14 +594,28 @@ export const PositionTimelineChart = memo(function PositionTimelineChart({
     return () => window.clearTimeout(timeoutId)
   }, [updateToken])
 
+  useEffect(() => {
+    const element = shellRef.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect
+      if (!rect || rect.width < 16 || rect.height < 16) return
+      setShellSize({ width: rect.width, height: rect.height })
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
   const allPoints = series.flatMap((item) => item.points).filter((point) => Number.isFinite(point.timestamp) && Number.isFinite(point.value))
 
   if (allPoints.length === 0) {
     return null
   }
 
-  const viewBoxWidth = CHART_VIEWBOX_WIDTH
-  const resolvedViewBoxHeight = viewBoxHeight ?? (typeof height === 'number' ? height : 300)
+  const viewBoxWidth = Math.round(shellSize?.width ?? CHART_VIEWBOX_WIDTH)
+  const resolvedViewBoxHeight = Math.round(
+    shellSize?.height ?? viewBoxHeight ?? (typeof height === 'number' ? height : 300),
+  )
   const viewBoxHeightValue = resolvedViewBoxHeight
   const padding = { top: 18, right: 12, bottom: 34, left: 78 }
   const chartWidth = viewBoxWidth - padding.left - padding.right
@@ -616,7 +647,7 @@ export const PositionTimelineChart = memo(function PositionTimelineChart({
   const zeroLineVisible = minValue < 0 && maxValue > 0
 
   return (
-    <div className="hud-chart-shell w-full" style={{ height }}>
+    <div ref={shellRef} className="hud-chart-shell w-full" style={{ height }}>
       <motion.div
         aria-hidden
         className="hud-chart-pulse"
