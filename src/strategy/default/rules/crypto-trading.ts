@@ -428,7 +428,12 @@ export async function runCryptoTrading(ctx: StrategyContext, positions: Position
       continue;
     }
 
-    if (!isBitcoin(signal.symbol) && (!btcSignal || (btcSignal.momentum ?? -Infinity) < minBtcMomentum)) {
+    const btcTrendRequired = ctx.config.crypto_require_btc_trend !== false;
+    if (
+      btcTrendRequired &&
+      !isBitcoin(signal.symbol) &&
+      (!btcSignal || (btcSignal.momentum ?? -Infinity) < minBtcMomentum)
+    ) {
       ctx.log("Crypto", "entry_blocked_btc_trend", {
         symbol: signal.symbol,
         btc_momentum: btcSignal?.momentum ?? null,

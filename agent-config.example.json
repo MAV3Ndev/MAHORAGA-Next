@@ -121,6 +121,7 @@
   "crypto_max_position_value": 15000,
   "crypto_take_profit_pct": 10,
   "crypto_stop_loss_pct": 5,
+  "crypto_require_btc_trend": true,
 
   "ticker_blacklist": [],
   "allowed_exchanges": ["NYSE", "NASDAQ", "ARCA", "AMEX", "BATS"],

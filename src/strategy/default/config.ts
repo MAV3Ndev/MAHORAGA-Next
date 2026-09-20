@@ -110,6 +110,7 @@ export const DEFAULT_CONFIG: AgentConfig = {
   crypto_reentry_cooldown_hours: 24,
   crypto_max_consecutive_losses: 2,
   crypto_btc_min_momentum: 2,
+  crypto_require_btc_trend: true,
   twitter_cookies: "",
   twitter_cookie_accounts: [],
   reddit_cookies: "",

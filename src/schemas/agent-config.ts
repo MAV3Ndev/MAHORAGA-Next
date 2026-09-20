@@ -72,6 +72,7 @@ export const AgentConfigSchema = z
     crypto_reentry_cooldown_hours: z.number().min(1).max(168),
     crypto_max_consecutive_losses: z.number().int().min(1).max(10),
     crypto_btc_min_momentum: z.number().min(-20).max(20),
+    crypto_require_btc_trend: z.boolean().default(true),
 
     twitter_cookies: z.string().trim().max(20000).default(""),
     twitter_cookie_accounts: z.array(CookieAccountSchema).max(20).default([]),
