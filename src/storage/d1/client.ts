@@ -136,6 +136,24 @@ export interface TradeDecisionRow {
   created_at: string;
 }
 
+export interface DecisionOutcomeRow {
+  decision_id: string;
+  symbol: string;
+  decision_at: string;
+  source: string;
+  action: string;
+  status: string;
+  confidence: number | null;
+  baseline_price: number | null;
+  baseline_at: string | null;
+  t1_return: number | null;
+  t5_return: number | null;
+  t20_return: number | null;
+  features_json: string | null;
+  label_status: string;
+  labeled_at: string;
+}
+
 export interface StructuredEventRow {
   id: string;
   raw_event_id: string | null;

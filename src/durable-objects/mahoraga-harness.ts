@@ -43,10 +43,13 @@ import { isRateLimitError, isUnknownModelError, ResearchService } from "../core/
 import { normalizeResearchAnalysis } from "../core/research-validation";
 import {
   buildSocialSnapshot,
+  computeSocialZScores,
   getSocialSnapshotCache,
   serializeSocialSnapshot,
   updateSocialHistoryFromSnapshot,
 } from "../core/social-snapshot";
+import { buildIndicatorReport, type OutcomeSample } from "../core/indicator-stats";
+import { labelDecisionOutcomes } from "../jobs/outcome-labeler";
 import { buildAgentStatusPayload } from "../core/status-payload";
 import type {
   AgentState,
@@ -80,6 +83,7 @@ import type { Account, LLMProvider, MarketClock, Order, Position } from "../prov
 import type { AgentConfig } from "../schemas/agent-config";
 import { safeValidateAgentConfig } from "../schemas/agent-config";
 import { createD1Client } from "../storage/d1/client";
+import { queryDecisionOutcomes } from "../storage/d1/queries/decision-outcomes";
 import { getTradeDecisionStats, insertTradeDecision, queryTradeDecisions } from "../storage/d1/queries/trade-decisions";
 import { createTrade } from "../storage/d1/queries/trades";
 import { createR2Client } from "../storage/r2/client";
@@ -2460,6 +2464,7 @@ export class MahoragaHarness extends DurableObject<Env> {
       "status",
       "logs",
       "trade-review",
+      "indicator-report",
       "costs",
       "signals",
       "history",
@@ -2490,6 +2495,8 @@ export class MahoragaHarness extends DurableObject<Env> {
           return this.handleGetLogs(url);
         case "trade-review":
           return this.handleGetTradeReview(url);
+        case "indicator-report":
+          return this.handleGetIndicatorReport(url);
         case "costs":
           return this.jsonResponse({ costs: this.state.costTracker });
         case "signals":
@@ -2790,6 +2797,61 @@ export class MahoragaHarness extends DurableObject<Env> {
         snapshots: includeSnapshots ? snapshots : undefined,
       },
     });
+  }
+
+  private async handleGetIndicatorReport(url: URL): Promise<Response> {
+    const days = Math.min(365, Math.max(1, parseInt(url.searchParams.get("days") || "90", 10)));
+    const refresh = url.searchParams.get("refresh") === "true";
+    const refreshLimit = Math.min(200, Math.max(1, parseInt(url.searchParams.get("refresh_limit") || "100", 10)));
+
+    let labelSummary: unknown;
+    if (refresh) {
+      labelSummary = await labelDecisionOutcomes(this.env, { lookbackDays: days, limit: refreshLimit }).catch(
+        (error) => ({ error: String(error) })
+      );
+    }
+
+    try {
+      const db = createD1Client(this.env.DB);
+      const rows = await queryDecisionOutcomes(db, { days });
+      const samples: OutcomeSample[] = rows.map((row) => {
+        let features: Record<string, unknown> = {};
+        if (row.features_json) {
+          try {
+            const parsed = JSON.parse(row.features_json);
+            if (parsed && typeof parsed === "object") features = parsed;
+          } catch {
+            // ignore malformed features
+          }
+        }
+        return {
+          decision_id: row.decision_id,
+          symbol: row.symbol,
+          decision_at: row.decision_at,
+          source: row.source,
+          action: row.action,
+          status: row.status,
+          confidence: row.confidence,
+          t1_return: row.t1_return,
+          t5_return: row.t5_return,
+          t20_return: row.t20_return,
+          features,
+        };
+      });
+
+      return this.jsonResponse({
+        ok: true,
+        data: {
+          ...buildIndicatorReport(samples, { days }),
+          refresh: labelSummary,
+        },
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({ ok: false, error: String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
   }
 
   private async handleGetHistory(url: URL): Promise<Response> {
@@ -3142,6 +3204,7 @@ export class MahoragaHarness extends DurableObject<Env> {
     const sectorMap = dynamicState.sectorMap as Record<string, string> | undefined;
     const marketRegime = dynamicState.marketRegimeCache as Record<string, unknown> | undefined;
     const socialSnapshot = getSocialSnapshotCache(this.state);
+    const socialEntry = this.getSocialSnapshotEntry(socialSnapshot, symbol);
 
     return {
       strategy: activeStrategy.name,
@@ -3151,7 +3214,10 @@ export class MahoragaHarness extends DurableObject<Env> {
       signal_research: this.state.signalResearch[symbol] ?? null,
       position_research: this.state.positionResearch[symbol] ?? null,
       position_entry: this.findTrackedPositionEntry(symbol) ?? null,
-      social_snapshot: this.getSocialSnapshotEntry(socialSnapshot, symbol) ?? null,
+      social_snapshot: socialEntry ?? null,
+      social_zscore: socialEntry
+        ? computeSocialZScores(this.state.socialHistory?.[symbol], socialEntry, Date.now())
+        : null,
       technicals: technicalData?.[symbol] ?? null,
       momentum: momentumData?.[symbol] ?? null,
       sector: sectorMap?.[symbol] ?? null,

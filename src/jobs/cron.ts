@@ -2,6 +2,7 @@ import type { Env } from "../env.d";
 import { createAlpacaProviders } from "../providers/alpaca";
 import { createSECEdgarProvider } from "../providers/news/sec-edgar";
 import { createD1Client } from "../storage/d1/client";
+import { labelDecisionOutcomes } from "./outcome-labeler";
 import { cleanupExpiredApprovals } from "../storage/d1/queries/approvals";
 import { insertRawEvent, rawEventExists } from "../storage/d1/queries/events";
 import { getRiskState, resetDailyLoss } from "../storage/d1/queries/risk-state";
@@ -131,6 +132,12 @@ async function runMidnightReset(env: Env): Promise<void> {
 
     const cleaned = await cleanupExpiredApprovals(db);
     console.log(`Cleaned up ${cleaned} expired approvals`);
+
+    const labeled = await labelDecisionOutcomes(env);
+    console.log(
+      `Outcome labeling: scanned=${labeled.scanned} labeled=${labeled.labeled} ` +
+        `complete=${labeled.complete} partial=${labeled.partial} unavailable=${labeled.unavailable}`
+    );
   } catch (error) {
     console.error("Midnight reset error:", error);
   }

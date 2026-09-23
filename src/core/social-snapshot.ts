@@ -97,6 +97,50 @@ export function updateSocialHistoryFromSnapshot(
   }
 }
 
+export interface SocialZScores {
+  volume_z: number | null;
+  sentiment_z: number | null;
+  samples: number;
+}
+
+const SOCIAL_ZSCORE_MIN_SAMPLES = 20;
+const SOCIAL_ZSCORE_EXCLUDE_RECENT_MS = 15 * 60 * 1000;
+
+/**
+ * Z-score of the current social volume/sentiment vs the symbol's own
+ * recent history (per-symbol normalization instead of a global absolute
+ * threshold). Returns null scores when history is too short or degenerate.
+ */
+export function computeSocialZScores(
+  history: SocialHistoryEntry[] | undefined,
+  current: { volume: number; sentiment: number },
+  nowMs: number
+): SocialZScores {
+  const past = (history ?? []).filter((entry) => entry.timestamp < nowMs - SOCIAL_ZSCORE_EXCLUDE_RECENT_MS);
+  if (past.length < SOCIAL_ZSCORE_MIN_SAMPLES) {
+    return { volume_z: null, sentiment_z: null, samples: past.length };
+  }
+
+  const zScore = (values: number[], v: number): number | null => {
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    const variance = values.reduce((a, x) => a + (x - mean) * (x - mean), 0) / values.length;
+    const sd = Math.sqrt(variance);
+    return sd > 1e-9 ? (v - mean) / sd : null;
+  };
+
+  return {
+    volume_z: zScore(
+      past.map((e) => e.volume),
+      current.volume
+    ),
+    sentiment_z: zScore(
+      past.map((e) => e.sentiment),
+      current.sentiment
+    ),
+    samples: past.length,
+  };
+}
+
 export function getSocialSnapshotCache(params: {
   socialSnapshotCache: Record<string, SocialSnapshotCacheEntry>;
   socialSnapshotCacheUpdatedAt: number;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSocialSnapshot,
+  computeSocialZScores,
   getSocialSnapshotCache,
   serializeSocialSnapshot,
   updateSocialHistoryFromSnapshot,
@@ -68,6 +69,35 @@ describe("social snapshot helpers", () => {
 
     expect(history.MSFT).toBeUndefined();
     expect(history.AAPL?.at(-1)).toMatchObject({ timestamp: now, volume: 2, sentiment: 0.4 });
+  });
+
+  it("computes per-symbol z-scores against history", () => {
+    const now = 100 * 60 * 1000;
+    const history: SocialHistoryEntry[] = Array.from({ length: 40 }, (_, i) => ({
+      timestamp: now - (40 - i) * 60 * 1000,
+      volume: 10,
+      sentiment: 0.3,
+    }));
+    // Constant history → sd = 0 → null z-scores
+    const flat = computeSocialZScores(history, { volume: 50, sentiment: 0.9 }, now);
+    expect(flat.volume_z).toBeNull();
+    expect(flat.sentiment_z).toBeNull();
+    expect(flat.samples).toBeGreaterThanOrEqual(20);
+
+    // Varying history → a current spike produces a positive z
+    const varying = history.map((e, i) => ({ ...e, volume: 8 + (i % 5) }));
+    const spiked = computeSocialZScores(varying, { volume: 30, sentiment: 0.3 }, now);
+    expect(spiked.volume_z).toBeGreaterThan(1);
+  });
+
+  it("returns null z-scores when history is too short", () => {
+    const r = computeSocialZScores(
+      [{ timestamp: 1, volume: 1, sentiment: 0.1 }],
+      { volume: 5, sentiment: 0.5 },
+      10 * 60 * 1000
+    );
+    expect(r.volume_z).toBeNull();
+    expect(r.samples).toBe(0); // entry is too recent (excluded window)
   });
 
   it("uses persisted snapshot cache when available", () => {
