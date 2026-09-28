@@ -947,6 +947,22 @@ export class MahoragaHarness extends DurableObject<Env> {
       delete this.state.stalenessAnalysis[alias];
       delete this.state.analystBuyCooldowns?.[alias];
     }
+    this.resetPositionExitState(symbol);
+  }
+
+  /**
+   * Trailing-stop / advanced-exit state is keyed by symbol and persists across
+   * positions. If it survives a close (e.g. sell paths that don't go through
+   * selectExits), a stale armed stop fires immediately on the next buy.
+   * Reset it whenever a position lifecycle ends or a fresh entry is created.
+   */
+  private resetPositionExitState(symbol: string): void {
+    const dynamicState = this.state as unknown as Record<string, unknown>;
+    const advancedExitState = dynamicState.advancedExitState as Record<string, unknown> | undefined;
+    for (const alias of this.getTrackedSymbolAliases(symbol)) {
+      delete dynamicState[`trailingStop_${alias}`];
+      delete advancedExitState?.[alias];
+    }
   }
 
   private setAnalystBuyCooldown(symbol: string, now = Date.now()): void {
@@ -1119,6 +1135,7 @@ export class MahoragaHarness extends DurableObject<Env> {
       if (!entry) {
         entry = this.createRecoveredPositionEntry(pos, socialSnapshot, inferredEntry);
         this.state.positionEntries[pos.symbol] = entry;
+        this.resetPositionExitState(pos.symbol);
       }
 
       if (
@@ -1934,6 +1951,7 @@ export class MahoragaHarness extends DurableObject<Env> {
               socialSnapshot,
               "research_options"
             );
+            this.resetPositionExitState(contract.symbol);
           }
         } else {
           this.log("Options", "contract_selection_failed", { symbol: entry.symbol });
@@ -1961,6 +1979,7 @@ export class MahoragaHarness extends DurableObject<Env> {
           socialSnapshot,
           "research"
         );
+        this.resetPositionExitState(entry.symbol);
       }
     }
 
@@ -2122,8 +2141,7 @@ export class MahoragaHarness extends DurableObject<Env> {
           continue;
         }
 
-        const guard = evaluateAnalystBuyGuard({
-          research: this.state.signalResearch[rec.symbol] ?? null,
+        const guardParams = {
           allowWaitResearch: true,
           momentum: momentumCache?.[rec.symbol] ?? null,
           cooldownUntil: this.getAnalystBuyCooldown(rec.symbol),
@@ -2131,9 +2149,38 @@ export class MahoragaHarness extends DurableObject<Env> {
           maxResearchAgeMs: ANALYST_BUY_RESEARCH_MAX_AGE_MS,
           maxAbsPriceChange24hPct: ANALYST_BUY_MAX_ABS_PRICE_CHANGE_24H_PCT,
           maxAbsPriceChange1hPct: ANALYST_BUY_MAX_ABS_PRICE_CHANGE_1H_PCT,
+        };
+        let guard = evaluateAnalystBuyGuard({
+          research: this.state.signalResearch[rec.symbol] ?? null,
+          ...guardParams,
         });
+
+        // Staleness is an infrastructure gap, not a signal-quality judgment.
+        // Refresh research on demand so high-conviction recs don't die on TTL.
+        let researchRefreshed = false;
+        if (!guard.allowed && (guard.reason === "stale_signal_research" || guard.reason === "missing_signal_research")) {
+          const symbolSignals = this.state.signalCache.filter((s) => s.symbol === rec.symbol);
+          const socialEntry = this.getSocialSnapshotEntry(getSocialSnapshotCache(this.state), rec.symbol);
+          const sentiment =
+            socialEntry?.sentiment ??
+            (symbolSignals.length
+              ? symbolSignals.reduce((acc, s) => acc + (s.sentiment || 0), 0) / symbolSignals.length
+              : 0);
+          const sources = [...new Set(symbolSignals.map((s) => s.source_detail || s.source))];
+          this.log("Analyst", "research_refresh_attempt", { symbol: rec.symbol, guard_reason: guard.reason });
+          const refreshed = await this.callSignalResearch(ctx, rec.symbol, sentiment, sources, symbolSignals);
+          if (refreshed) {
+            researchRefreshed = true;
+            guard = evaluateAnalystBuyGuard({ research: refreshed, ...guardParams });
+          }
+        }
+
         if (!guard.allowed) {
-          this.log("Analyst", "llm_buy_blocked_guard", { symbol: rec.symbol, reason: guard.reason });
+          this.log("Analyst", "llm_buy_blocked_guard", {
+            symbol: rec.symbol,
+            reason: guard.reason,
+            research_refreshed: researchRefreshed,
+          });
           await this.recordTradeDecision({
             source: "analyst_recommendation",
             symbol: rec.symbol,
@@ -2141,7 +2188,7 @@ export class MahoragaHarness extends DurableObject<Env> {
             status: "blocked",
             confidence: rec.confidence,
             reason: rec.reasoning,
-            metadata: { reason: guard.reason, ...(guard.metadata ?? {}) },
+            metadata: { reason: guard.reason, research_refreshed: researchRefreshed, ...(guard.metadata ?? {}) },
             snapshot: this.buildTradeDecisionSnapshot(rec.symbol, { account, positions, recommendation: rec }),
           });
           continue;
@@ -2235,6 +2282,7 @@ export class MahoragaHarness extends DurableObject<Env> {
             socialSnapshot,
             "analyst"
           );
+          this.resetPositionExitState(rec.symbol);
         }
       }
     }
@@ -2426,6 +2474,7 @@ export class MahoragaHarness extends DurableObject<Env> {
             socialSnapshot,
             "premarket"
           );
+          this.resetPositionExitState(rec.symbol);
         }
       }
     }

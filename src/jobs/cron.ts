@@ -133,7 +133,7 @@ async function runMidnightReset(env: Env): Promise<void> {
     const cleaned = await cleanupExpiredApprovals(db);
     console.log(`Cleaned up ${cleaned} expired approvals`);
 
-    const labeled = await labelDecisionOutcomes(env);
+    const labeled = await labelDecisionOutcomes(env, { limit: 800 });
     console.log(
       `Outcome labeling: scanned=${labeled.scanned} labeled=${labeled.labeled} ` +
         `complete=${labeled.complete} partial=${labeled.partial} unavailable=${labeled.unavailable}`

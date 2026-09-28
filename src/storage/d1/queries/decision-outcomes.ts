@@ -82,7 +82,7 @@ export async function queryUnlabeledDecisions(
          OR o.label_status = 'partial'
          OR (o.label_status = 'unavailable' AND o.labeled_at >= ?)
        )
-     ORDER BY d.decision_at ASC
+     ORDER BY CASE WHEN d.action IN ('BUY', 'SELL') THEN 0 ELSE 1 END, d.decision_at DESC
      LIMIT ?`,
     [cutoff, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), limit]
   );
