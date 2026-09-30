@@ -7,6 +7,7 @@
  * the choice is BUY. All questions run in a single systemone request.
  */
 
+import type { DecisionMemory } from "../../core/decision-memory";
 import type { PositionEntry, ResearchResult, Signal } from "../../core/types";
 import type { Account, Position } from "../types";
 import {
@@ -35,6 +36,7 @@ export interface JevAnalystInput {
   research: Record<string, ResearchResult>;
   positionEntries: Record<string, PositionEntry>;
   config: JevAnalystConfig;
+  memory?: DecisionMemory;
   now?: number;
 }
 
@@ -122,6 +124,7 @@ export function buildJevAnalystRequest(input: JevAnalystInput): {
     }),
     candidates: candidates.map((c) => {
       const research = input.research[c.symbol];
+      const trackRecord = input.memory?.symbols[c.symbol];
       return {
         symbol: c.symbol,
         avg_sentiment: Number(c.avgSentiment.toFixed(3)),
@@ -138,8 +141,36 @@ export function buildJevAnalystRequest(input: JevAnalystInput): {
               catalysts: research.catalysts,
             }
           : null,
+        track_record: trackRecord
+          ? {
+              evaluations: trackRecord.evaluations,
+              avg_t1_return_pct: trackRecord.avg_t1 !== null ? Number((trackRecord.avg_t1 * 100).toFixed(2)) : null,
+              avg_t5_return_pct: trackRecord.avg_t5 !== null ? Number((trackRecord.avg_t5 * 100).toFixed(2)) : null,
+              win_rate_t1: trackRecord.win_rate_t1 !== null ? Number(trackRecord.win_rate_t1.toFixed(2)) : null,
+            }
+          : null,
       };
     }),
+    memory: input.memory
+      ? {
+          window_days: input.memory.window_days,
+          closed_trades_30d: {
+            count: input.memory.closed_trades.count,
+            win_rate: Number(input.memory.closed_trades.win_rate.toFixed(2)),
+            avg_pnl_pct:
+              input.memory.closed_trades.avg_pnl_pct !== null
+                ? Number(input.memory.closed_trades.avg_pnl_pct.toFixed(2))
+                : null,
+          },
+          // Top measured relationships — Jev sees what has actually predicted returns.
+          feature_lessons: input.memory.feature_lessons.slice(0, 5).map((f) => ({
+            feature: f.feature,
+            horizon: f.horizon,
+            ic: Number(f.ic.toFixed(3)),
+            n: f.n,
+          })),
+        }
+      : null,
     rules: {
       max_position_value: input.config.max_position_value,
       take_profit_pct: input.config.take_profit_pct,
@@ -152,10 +183,10 @@ export function buildJevAnalystRequest(input: JevAnalystInput): {
   candidates.forEach((candidate, index) => {
     questions[`action_${index}`] = {
       type: "choice",
-      instructions: `Decide the trading action for the candidate at \`candidates[${index}]\` (symbol ${candidate.symbol}).`,
+      instructions: `Decide the trading action for the candidate at \`candidates[${index}]\` (symbol ${candidate.symbol}). The candidate's \`track_record\` shows this agent's measured past decisions on that symbol (direction-adjusted forward returns), and \`memory\` summarizes measured portfolio outcomes.`,
       criteria: {
-        BUY: "Open a new long position. Appropriate only when the symbol is not currently held, research verdict is BUY with solid confidence and entry quality, and sentiment is strong across multiple sources.",
-        SELL: "Exit the currently held position. Appropriate only when the symbol is currently held and shows deteriorating sentiment, red flags, or hits the stop-loss/take-profit rules. Do not sell solely because gains are small.",
+        BUY: "Open a new long position. Appropriate only when the symbol is not currently held, research verdict is BUY with solid confidence and entry quality, and sentiment is strong across multiple sources. A positive track_record supports conviction; a negative one demands materially better current evidence.",
+        SELL: "Exit the currently held position. Appropriate only when the symbol is currently held and shows deteriorating sentiment, red flags, or hits the stop-loss/take-profit rules. Do not sell solely because gains are small; a strong positive track_record argues for patience.",
         HOLD: "Take no action on this symbol.",
       },
     };

@@ -2,6 +2,7 @@
  * Analyst prompt builder — batch signal analysis for trading decisions.
  */
 
+import { type DecisionMemory, formatDecisionMemoryBlock } from "../../../core/decision-memory";
 import type { Account, Position, ResearchResult, Signal } from "../../../core/types";
 import type { AnalyzeSignalsPromptBuilder, PromptTemplate, StrategyContext } from "../../types";
 import { getCryptoSymbolAliases, isCryptoSymbol } from "../helpers/crypto";
@@ -40,6 +41,7 @@ export const analyzeSignalsPrompt: AnalyzeSignalsPromptBuilder = (
   );
 
   const researchMap = ctx.state.get<Record<string, ResearchResult>>("signalResearch") ?? {};
+  const decisionMemory = ctx.state.get<DecisionMemory>("decisionMemory");
   const researchLines = candidates.map((c) => {
     const research = researchMap[c.symbol];
     if (!research) return `- ${c.symbol}: NO RESEARCH (BUY will be rejected — research required)`;
@@ -91,7 +93,7 @@ TRADING RULES:
 - Stop loss: ${ctx.config.stop_loss_pct}%
 - Min confidence to trade: ${ctx.config.min_analyst_confidence}
 - Min hold time before selling: ${ctx.config.llm_min_hold_minutes ?? 30} minutes
-
+${decisionMemory ? `\n${formatDecisionMemoryBlock(decisionMemory)}\n` : ""}
 Analyze and provide BUY/SELL/HOLD recommendations:`;
 
   return {

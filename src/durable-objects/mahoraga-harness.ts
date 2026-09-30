@@ -17,6 +17,8 @@ import {
 } from "../core/analyst-recommendations";
 import { getCryptoSymbolAliases, isCryptoSymbol, normalizeCryptoSymbol } from "../core/asset-symbols";
 import { type AgentConfigUpdate, buildAgentConfigUpdateCandidate } from "../core/config-update";
+import { buildDecisionMemory, type DecisionMemory } from "../core/decision-memory";
+import { buildIndicatorReport, type OutcomeSample } from "../core/indicator-stats";
 import { createInitialAgentState } from "../core/initial-state";
 import {
   buildMarketSessionState,
@@ -48,8 +50,6 @@ import {
   serializeSocialSnapshot,
   updateSocialHistoryFromSnapshot,
 } from "../core/social-snapshot";
-import { buildIndicatorReport, type OutcomeSample } from "../core/indicator-stats";
-import { labelDecisionOutcomes } from "../jobs/outcome-labeler";
 import { buildAgentStatusPayload } from "../core/status-payload";
 import type {
   AgentState,
@@ -60,6 +60,7 @@ import type {
   SocialSnapshotCacheEntry,
 } from "../core/types";
 import type { Env } from "../env.d";
+import { labelDecisionOutcomes } from "../jobs/outcome-labeler";
 import { bearerTokenMatches, jsonAuthResponse } from "../lib/auth";
 import {
   createDailyReportBucket,
@@ -77,9 +78,9 @@ import { createAlpacaProviders } from "../providers/alpaca";
 import { type LLMEndpointProbeResult, probeLLMEndpoint } from "../providers/llm/diagnostics";
 import { createLLMProvider } from "../providers/llm/factory";
 import { computeTechnicals } from "../providers/technicals";
+import type { Account, LLMProvider, MarketClock, Order, Position } from "../providers/types";
 import { analyzeSignalsWithJev } from "../providers/typesafe/analyst";
 import { createTypeSafeClientFromEnv, type TypeSafeClient } from "../providers/typesafe/client";
-import type { Account, LLMProvider, MarketClock, Order, Position } from "../providers/types";
 import type { AgentConfig } from "../schemas/agent-config";
 import { safeValidateAgentConfig } from "../schemas/agent-config";
 import { createD1Client } from "../storage/d1/client";
@@ -491,9 +492,7 @@ export class MahoragaHarness extends DurableObject<Env> {
       // Signal research — market hours only, plus a pre-open warm-up window so
       // the premarket plan and open execution have fresh research available
       const minutesToNextOpen =
-        !clock.is_open && session.nextOpenValid
-          ? (session.nextOpenMs - clockNowMs) / 60_000
-          : Number.POSITIVE_INFINITY;
+        !clock.is_open && session.nextOpenValid ? (session.nextOpenMs - clockNowMs) / 60_000 : Number.POSITIVE_INFINITY;
       const signalResearchWindowOpen = clock.is_open || minutesToNextOpen <= SIGNAL_RESEARCH_PREMARKET_MINUTES;
       if (signalResearchWindowOpen && shouldRunInterval(now, this.state.lastResearchRun, SIGNAL_RESEARCH_INTERVAL_MS)) {
         console.log("[Alarm] Starting signal research");
@@ -1563,7 +1562,9 @@ export class MahoragaHarness extends DurableObject<Env> {
       }
 
       const dynamicState = this.state as unknown as Record<string, unknown>;
-      const technical = (dynamicState.technicalDataCache as Record<string, TechnicalDataCacheEntry> | undefined)?.[symbol];
+      const technical = (dynamicState.technicalDataCache as Record<string, TechnicalDataCacheEntry> | undefined)?.[
+        symbol
+      ];
       const momentum = (dynamicState.momentumDataCache as Record<string, MomentumDataCacheEntry> | undefined)?.[symbol];
       const social = this.getSocialSnapshotEntry(getSocialSnapshotCache(this.state), symbol);
       price ||= technical?.current_price ?? 0;
@@ -1613,9 +1614,7 @@ export class MahoragaHarness extends DurableObject<Env> {
                 volume_change: momentum.volume_change,
               }
             : null,
-          social: social
-            ? { volume: social.volume, sentiment: social.sentiment, sources: social.sources }
-            : null,
+          social: social ? { volume: social.volume, sentiment: social.sentiment, sources: social.sources } : null,
           entry_quality: result.entry_quality,
           red_flags: result.red_flags,
           catalysts: result.catalysts,
@@ -1691,6 +1690,8 @@ export class MahoragaHarness extends DurableObject<Env> {
     if (signals.length === 0) {
       return { recommendations: [], market_summary: "No signals to analyze", high_conviction: [] };
     }
+
+    await this.ensureDecisionMemory();
 
     if (this.state.config.analyst_engine === "jev") {
       const jevResult = await this.callJevAnalyst(signals, positions, account);
@@ -1773,6 +1774,7 @@ export class MahoragaHarness extends DurableObject<Env> {
         research: this.state.signalResearch,
         positionEntries: this.state.positionEntries,
         config: this.state.config,
+        memory: this.getDecisionMemory(),
       });
 
       this.trackLLMCost(result.model, result.usage.input_tokens, result.usage.output_tokens);
@@ -1791,6 +1793,31 @@ export class MahoragaHarness extends DurableObject<Env> {
       this.log("Analyst", "error", { engine: "jev", message: String(error) });
       return { recommendations: [], market_summary: `Jev analysis failed: ${error}`, high_conviction: [] };
     }
+  }
+
+  private static readonly DECISION_MEMORY_TTL_MS = 15 * 60 * 1000;
+
+  /**
+   * Measured-outcome memory for analyst/research context. Recomputed at most
+   * every 15 minutes; stored on state so prompts, Jev state, and snapshots
+   * all see the same snapshot of accumulated evidence.
+   */
+  private async ensureDecisionMemory(): Promise<void> {
+    const dynamicState = this.state as unknown as Record<string, unknown>;
+    const computedAt = (dynamicState.decisionMemoryComputedAt as number) ?? 0;
+    if (dynamicState.decisionMemory && Date.now() - computedAt < MahoragaHarness.DECISION_MEMORY_TTL_MS) return;
+
+    try {
+      const db = createD1Client(this.env.DB);
+      dynamicState.decisionMemory = await buildDecisionMemory(db, { days: 90 });
+      dynamicState.decisionMemoryComputedAt = Date.now();
+    } catch (error) {
+      this.log("System", "decision_memory_error", { error: String(error) });
+    }
+  }
+
+  private getDecisionMemory(): DecisionMemory | undefined {
+    return (this.state as unknown as Record<string, unknown>).decisionMemory as DecisionMemory | undefined;
   }
 
   // ============================================================================
@@ -2158,7 +2185,10 @@ export class MahoragaHarness extends DurableObject<Env> {
         // Staleness is an infrastructure gap, not a signal-quality judgment.
         // Refresh research on demand so high-conviction recs don't die on TTL.
         let researchRefreshed = false;
-        if (!guard.allowed && (guard.reason === "stale_signal_research" || guard.reason === "missing_signal_research")) {
+        if (
+          !guard.allowed &&
+          (guard.reason === "stale_signal_research" || guard.reason === "missing_signal_research")
+        ) {
           const symbolSignals = this.state.signalCache.filter((s) => s.symbol === rec.symbol);
           const socialEntry = this.getSocialSnapshotEntry(getSocialSnapshotCache(this.state), rec.symbol);
           const sentiment =

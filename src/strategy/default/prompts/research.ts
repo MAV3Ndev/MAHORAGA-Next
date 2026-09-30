@@ -4,6 +4,7 @@
  * These return PromptTemplate objects. The core harness makes the LLM call.
  */
 
+import type { DecisionMemory } from "../../../core/decision-memory";
 import type { Position, Signal } from "../../../core/types";
 import type {
   PromptTemplate,
@@ -27,6 +28,7 @@ export const researchSignalPrompt: ResearchSignalPromptBuilder = (
   // Extract technical data from state cache if available
   const technicalData = getTechnicalDataFromCache(symbol, ctx);
   const momentumData = getMomentumDataFromCache(symbol, ctx);
+  const trackRecord = getSymbolTrackRecord(symbol, ctx);
 
   return {
     system:
@@ -41,6 +43,7 @@ CURRENT DATA:
 ${technicalData}
 ${momentumData}
 ${formatSignalEvidence(signals)}
+${trackRecord}
 
 EVALUATION CRITERIA:
 1. ENTRY QUALITY: Is this a pullback entry or a breakout? RSI 40-55 suggests pullback, >70 overbought
@@ -144,6 +147,26 @@ Provide a risk assessment with these exact JSON fields:
     maxTokens: 250,
   };
 };
+
+/**
+ * Measured track record of past decisions on this symbol — the agent's own
+ * accumulated evidence rather than generic priors.
+ */
+function getSymbolTrackRecord(symbol: string, ctx: StrategyContext): string {
+  const memory = ctx.state.get<DecisionMemory>("decisionMemory");
+  const record = memory?.symbols[symbol];
+  if (!record || record.evaluations === 0) {
+    return "TRACK RECORD: No labeled history for this symbol";
+  }
+
+  const fmtPct = (v: number | null) => (v === null ? "n/a" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`);
+  const winRate = record.win_rate_t1 !== null ? `${(record.win_rate_t1 * 100).toFixed(0)}%` : "n/a";
+  return (
+    `TRACK RECORD (this agent's past ${record.evaluations} decisions on ${symbol}: ` +
+    `avg T+1 ${fmtPct(record.avg_t1)}, avg T+5 ${fmtPct(record.avg_t5)}, T+1 win rate ${winRate} — ` +
+    `direction-adjusted forward returns; weight this verdict history accordingly)`
+  );
+}
 
 /**
  * Get technical data from state cache.
