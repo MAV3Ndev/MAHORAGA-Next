@@ -180,6 +180,10 @@ export function extractDecisionFeatures(
     }
     const rs = num(research.sentiment);
     if (rs !== null) features.research_sentiment = rs;
+    const sl = num(research.stop_loss_pct);
+    if (sl !== null) features.research_stop_loss_pct = sl;
+    const tp = num(research.take_profit_pct);
+    if (tp !== null) features.research_take_profit_pct = tp;
   }
 
   const rec = asRecord(snap.recommendation);

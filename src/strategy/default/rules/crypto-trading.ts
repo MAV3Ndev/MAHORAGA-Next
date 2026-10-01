@@ -13,6 +13,7 @@ import { createAlpacaProviders } from "../../../providers/alpaca";
 import type { StrategyContext } from "../../types";
 import { getCryptoSymbolAliases, isCryptoSymbol, normalizeCryptoSymbol } from "../helpers/crypto";
 import { checkAdvancedExits, getTrailingStopState, type TrailingStopState } from "./advanced-exits";
+import { getEffectiveStopLossPct, getEffectiveTakeProfitPct } from "./exit-thresholds";
 import { computeRiskSizedNotional } from "./risk-sizing";
 
 const MAX_RETRIES = 3;
@@ -341,10 +342,23 @@ export async function runCryptoTrading(ctx: StrategyContext, positions: Position
     );
     for (const alias of getCryptoSymbolAliases(pos.symbol)) trailingStates[alias] = nextTrailingState;
 
+    const cryptoAtr = getCryptoAtr(ctx, pos.symbol);
+    const entryPrice = pos.avg_entry_price || pos.current_price;
+    const effectiveStopLossPct = getEffectiveStopLossPct(
+      entry?.recommended_stop_loss_pct,
+      ctx.config.crypto_stop_loss_pct,
+      cryptoAtr,
+      entryPrice
+    );
+    const effectiveTakeProfitPct = getEffectiveTakeProfitPct(
+      entry?.recommended_take_profit_pct,
+      ctx.config.crypto_take_profit_pct
+    );
+
     const advancedExit = checkAdvancedExits(
       pos,
       entry,
-      getCryptoAtr(ctx, pos.symbol),
+      cryptoAtr,
       {
         trailing_stop_enabled: ctx.config.trailing_stop_enabled ?? false,
         trailing_stop_pct: ctx.config.trailing_stop_pct ?? 3.5,
@@ -353,13 +367,13 @@ export async function runCryptoTrading(ctx: StrategyContext, positions: Position
         tp_atr_multiplier: ctx.config.tp_atr_multiplier ?? 3,
         tp_min_pct: ctx.config.tp_min_pct ?? 5,
         tp_max_pct: ctx.config.tp_max_pct ?? 25,
-        dynamic_tp_fallback_pct: ctx.config.dynamic_tp_fallback_pct ?? ctx.config.crypto_take_profit_pct,
-        stop_loss_pct: ctx.config.crypto_stop_loss_pct,
+        dynamic_tp_fallback_pct: ctx.config.dynamic_tp_fallback_pct ?? effectiveTakeProfitPct,
+        stop_loss_pct: effectiveStopLossPct,
       },
       nextTrailingState
     );
 
-    const shouldTakeProfit = plPct >= ctx.config.crypto_take_profit_pct && !advancedExit.shouldExit;
+    const shouldTakeProfit = plPct >= effectiveTakeProfitPct && !advancedExit.shouldExit;
     if (advancedExit.shouldExit || shouldTakeProfit) {
       const reason = advancedExit.shouldExit ? advancedExit.reason : `Crypto take profit at +${plPct.toFixed(1)}%`;
       ctx.log("Crypto", advancedExit.shouldExit ? (advancedExit.exitType ?? "exit") : "take_profit", {
@@ -498,7 +512,12 @@ export async function runCryptoTrading(ctx: StrategyContext, positions: Position
       confidence: research.confidence,
       positionSizePctOfCash: ctx.config.position_size_pct_of_cash,
       riskPerTradePct: ctx.config.risk_per_trade_pct,
-      stopLossPct: research.stop_loss_pct ?? ctx.config.crypto_stop_loss_pct,
+      stopLossPct: getEffectiveStopLossPct(
+        research.stop_loss_pct,
+        ctx.config.crypto_stop_loss_pct,
+        getCryptoAtr(ctx, signal.symbol),
+        signal.price
+      ),
       entryPrice: signal.price,
       atr: getCryptoAtr(ctx, signal.symbol),
     });

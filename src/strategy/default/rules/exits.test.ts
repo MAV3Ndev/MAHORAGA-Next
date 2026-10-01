@@ -138,7 +138,7 @@ describe("exit rules", () => {
     ]);
   });
 
-  it("does not let research widen the configured stop loss", () => {
+  it("lets research widen the stop only up to the 2x-config band", () => {
     const stateStore = new Map<string, unknown>();
     const ctx = {
       config: {
@@ -200,12 +200,8 @@ describe("exit rules", () => {
       {} as never
     );
 
-    expect(exits).toEqual([
-      {
-        symbol: "AAPL",
-        reason: "Stop loss at -6.0%",
-      },
-    ]);
+    // recommended 15% clamps to 2x config = 10%, so a -6% move does not exit
+    expect(exits).toEqual([]);
   });
 
   it("does not treat a missing social snapshot as zero volume", () => {

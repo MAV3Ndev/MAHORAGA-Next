@@ -9,6 +9,7 @@ import type { Account, Position } from "../../../core/types";
 import type { SellCandidate, StrategyContext } from "../../types";
 import { getCryptoSymbolAliases, isCryptoSymbol } from "../helpers/crypto";
 import { checkAdvancedExits, getTrailingStopState, type TrailingStopState } from "./advanced-exits";
+import { getEffectiveStopLossPct, getEffectiveTakeProfitPct } from "./exit-thresholds";
 import { analyzeStaleness } from "./staleness";
 
 /**
@@ -27,15 +28,24 @@ export function selectExits(ctx: StrategyContext, positions: Position[], _accoun
     }
 
     const entry = getPositionEntry(pos.symbol, ctx);
-    const effectiveStopLossPct = getEffectiveStopLossPct(entry?.recommended_stop_loss_pct, ctx.config.stop_loss_pct);
-    const effectiveTakeProfitPct = entry?.recommended_take_profit_pct ?? ctx.config.take_profit_pct;
+    const atr = getATR(pos.symbol, ctx);
+    const entryPrice = pos.avg_entry_price || pos.current_price;
+    const effectiveStopLossPct = getEffectiveStopLossPct(
+      entry?.recommended_stop_loss_pct,
+      ctx.config.stop_loss_pct,
+      atr,
+      entryPrice
+    );
+    const effectiveTakeProfitPct = getEffectiveTakeProfitPct(
+      entry?.recommended_take_profit_pct,
+      ctx.config.take_profit_pct
+    );
 
     // Get or initialize trailing stop state
     const trailingStateKey = `trailingStop_${pos.symbol}`;
     let trailingState = ctx.state.get<TrailingStopState>(trailingStateKey);
 
     // Check advanced exits (trailing stop + dynamic TP)
-    const atr = getATR(pos.symbol, ctx);
     const advancedResult = checkAdvancedExits(
       pos,
       entry,
@@ -207,13 +217,6 @@ function getPositionEntry(symbol: string, ctx: StrategyContext) {
   }
 
   return undefined;
-}
-
-function getEffectiveStopLossPct(recommendedStopLossPct: number | undefined, configuredStopLossPct: number): number {
-  if (recommendedStopLossPct === undefined || !Number.isFinite(recommendedStopLossPct) || recommendedStopLossPct <= 0) {
-    return configuredStopLossPct;
-  }
-  return Math.min(recommendedStopLossPct, configuredStopLossPct);
 }
 
 function getPositionResearch(

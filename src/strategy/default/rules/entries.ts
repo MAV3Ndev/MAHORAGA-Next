@@ -11,6 +11,7 @@ import type { BuyCandidate, StrategyContext } from "../../types";
 import { type CandidateScore, calculateCandidateScores } from "./candidate-score";
 import { evaluateEntryQualityForSymbol } from "./entry-quality";
 import { checkEntryTiming, type TechnicalData } from "./entry-timing";
+import { getEffectiveStopLossPct } from "./exit-thresholds";
 import { analyzeMarketRegime, type MarketRegimeData } from "./market-regime";
 import { checkPortfolioRisk } from "./portfolio-risk";
 import { computeRiskSizedNotional } from "./risk-sizing";
@@ -187,7 +188,12 @@ export function selectEntries(
       confidence: compositeScore,
       positionSizePctOfCash: ctx.config.position_size_pct_of_cash,
       riskPerTradePct: ctx.config.risk_per_trade_pct,
-      stopLossPct: r.stop_loss_pct ?? ctx.config.stop_loss_pct,
+      stopLossPct: getEffectiveStopLossPct(
+        r.stop_loss_pct,
+        ctx.config.stop_loss_pct,
+        techData.atr,
+        techData.current_price
+      ),
       entryPrice: techData.current_price,
       atr: techData.atr,
       regimeMultiplier: regimeResult.positionSizeMultiplier,
