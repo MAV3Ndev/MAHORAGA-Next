@@ -6,6 +6,7 @@ import { labelDecisionOutcomes } from "./outcome-labeler";
 import { cleanupExpiredApprovals } from "../storage/d1/queries/approvals";
 import { insertRawEvent, rawEventExists } from "../storage/d1/queries/events";
 import { getRiskState, resetDailyLoss } from "../storage/d1/queries/risk-state";
+import { syncRecentTradeStatuses } from "./trade-sync";
 
 export const CRON_SCHEDULES = {
   eventIngestion: "*/5 13-21 * * 1-5",
@@ -40,6 +41,12 @@ export async function handleCronEvent(cronId: string, env: Env): Promise<void> {
   }
 
   await job.run(env);
+  try {
+    const summary = await syncRecentTradeStatuses(createD1Client(env.DB), createAlpacaProviders(env));
+    console.log(`Trade status sync: scanned=${summary.scanned} updated=${summary.updated}`);
+  } catch (error) {
+    console.error("Trade status sync error:", error);
+  }
 }
 
 async function runEventIngestion(env: Env): Promise<void> {

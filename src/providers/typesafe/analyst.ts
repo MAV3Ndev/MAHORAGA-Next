@@ -35,17 +35,53 @@ export interface JevAnalystInput {
   account: Account;
   research: Record<string, ResearchResult>;
   positionEntries: Record<string, PositionEntry>;
+  marketContext?: Record<string, JevMarketContext>;
+  marketRegime?: Record<string, unknown> | null;
   config: JevAnalystConfig;
   memory?: DecisionMemory;
   now?: number;
 }
 
+export interface JevMarketContext {
+  updated_at: number;
+  current_price?: number;
+  rsi?: number;
+  sma_20?: number;
+  sma_50?: number;
+  atr?: number;
+  relative_volume?: number;
+  daily_bars?: number;
+  hourly_bars?: number;
+  price_change_1h?: number;
+  price_change_24h?: number;
+  sector?: string;
+}
+
 export interface JevAnalystRecommendation {
   action: "BUY" | "SELL" | "HOLD";
   symbol: string;
+  /** Model's self-reported confidence in its response, not the return probability. */
   confidence: number;
+  /** Probability assigned to the selected BUY/SELL/HOLD choice. */
+  action_probability: number;
   reasoning: string;
   suggested_size_pct?: number;
+}
+
+function percentFrom(value: number | undefined, reference: number | undefined): number | null {
+  if (value === undefined || reference === undefined || reference === 0) return null;
+  return Number((((value - reference) / reference) * 100).toFixed(2));
+}
+
+function summarizeMarketRegime(regime: Record<string, unknown> | null, key: "spy" | "qqq") {
+  const price = regime?.[`${key}Price`];
+  const sma20 = regime?.[`${key}Sma20`];
+  const sma50 = regime?.[`${key}Sma50`];
+  const isNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+  return {
+    price_vs_sma_20_pct: isNumber(price) && isNumber(sma20) ? percentFrom(price, sma20) : null,
+    price_vs_sma_50_pct: isNumber(price) && isNumber(sma50) ? percentFrom(price, sma50) : null,
+  };
 }
 
 export interface JevAnalystResult {
@@ -81,7 +117,7 @@ function aggregateCandidates(signals: Signal[], minSentiment: number, heldSymbol
     agg.count++;
   }
 
-  return Array.from(aggregated.values())
+  const candidates = Array.from(aggregated.values())
     .map((a) => ({
       symbol: a.symbol,
       avgSentiment: a.totalSentiment / a.count,
@@ -92,6 +128,12 @@ function aggregateCandidates(signals: Signal[], minSentiment: number, heldSymbol
     .filter((a) => a.avgSentiment >= minSentiment * 0.5)
     .sort((a, b) => b.avgSentiment - a.avgSentiment)
     .slice(0, MAX_CANDIDATES);
+  for (const symbol of heldSymbols) {
+    if (!candidates.some((candidate) => candidate.symbol === symbol)) {
+      candidates.push({ symbol, avgSentiment: 0, sources: [], count: 0, held: true });
+    }
+  }
+  return candidates;
 }
 
 export function buildJevAnalystRequest(input: JevAnalystInput): {
@@ -125,12 +167,42 @@ export function buildJevAnalystRequest(input: JevAnalystInput): {
     candidates: candidates.map((c) => {
       const research = input.research[c.symbol];
       const trackRecord = input.memory?.symbols[c.symbol];
+      const market = input.marketContext?.[c.symbol];
+      const marketAgeMinutes = market ? Math.max(0, (now - market.updated_at) / 60_000) : null;
+      const currentPrice = market?.current_price;
       return {
         symbol: c.symbol,
         avg_sentiment: Number(c.avgSentiment.toFixed(3)),
         signal_count: c.count,
         sources: c.sources,
         currently_held: c.held,
+        market_context: market
+          ? {
+              as_of: new Date(market.updated_at).toISOString(),
+              cache_age_minutes: Number(marketAgeMinutes!.toFixed(1)),
+              cache_freshness: marketAgeMinutes! <= 15 ? "fresh" : "stale",
+              technical_data_quality:
+                market.daily_bars === undefined
+                  ? "price_only_or_unverified"
+                  : market.daily_bars >= 50
+                    ? "sufficient_history"
+                    : "limited_history",
+              daily_bars: market.daily_bars ?? null,
+              hourly_bars: market.hourly_bars ?? null,
+              current_price: currentPrice ?? null,
+              rsi_14: market.rsi ?? null,
+              price_vs_sma_20_pct: percentFrom(currentPrice, market.sma_20),
+              price_vs_sma_50_pct: percentFrom(currentPrice, market.sma_50),
+              atr_pct:
+                currentPrice && market.atr !== undefined
+                  ? Number(((market.atr / currentPrice) * 100).toFixed(2))
+                  : null,
+              relative_volume: market.relative_volume ?? null,
+              momentum_1h_pct: market.price_change_1h ?? null,
+              momentum_24h_pct: market.price_change_24h ?? null,
+              sector: market.sector ?? null,
+            }
+          : null,
         research: research
           ? {
               verdict: research.verdict,
@@ -169,8 +241,19 @@ export function buildJevAnalystRequest(input: JevAnalystInput): {
             ic: Number(f.ic.toFixed(3)),
             n: f.n,
           })),
+          action_lessons: input.memory.action_lessons.slice(0, 8).map((lesson) => ({
+            action: lesson.action,
+            n: lesson.n,
+            mean_t1_return_pct: lesson.mean_t1 !== null ? Number((lesson.mean_t1 * 100).toFixed(2)) : null,
+            mean_t5_return_pct: lesson.mean_t5 !== null ? Number((lesson.mean_t5 * 100).toFixed(2)) : null,
+            win_rate_t1: lesson.win_rate_t1 !== null ? Number(lesson.win_rate_t1.toFixed(2)) : null,
+          })),
         }
       : null,
+    market_regime: {
+      spy: summarizeMarketRegime(input.marketRegime ?? null, "spy"),
+      qqq: summarizeMarketRegime(input.marketRegime ?? null, "qqq"),
+    },
     rules: {
       max_position_value: input.config.max_position_value,
       take_profit_pct: input.config.take_profit_pct,
@@ -183,9 +266,9 @@ export function buildJevAnalystRequest(input: JevAnalystInput): {
   candidates.forEach((candidate, index) => {
     questions[`action_${index}`] = {
       type: "choice",
-      instructions: `Decide the trading action for the candidate at \`candidates[${index}]\` (symbol ${candidate.symbol}). The candidate's \`track_record\` shows this agent's measured past decisions on that symbol (direction-adjusted forward returns), and \`memory\` summarizes measured portfolio outcomes.`,
+      instructions: `Decide the trading action for the candidate at \`candidates[${index}]\` (symbol ${candidate.symbol}). The candidate's \`market_context\` is the latest cached technical/momentum snapshot; treat stale, incomplete, or missing fields as unknown, not as confirmation. Compare the evidence with \`market_regime\`, the BUY/SELL research verdict, and the measured \`track_record\` / \`memory\`. Social sentiment alone is not an edge. Prefer HOLD when evidence is mixed, stale, or does not support positive expected return after risk. Choice probabilities describe preference among BUY/SELL/HOLD labels, not probability of profit or expected return.`,
       criteria: {
-        BUY: "Open a new long position. Appropriate only when the symbol is not currently held, research verdict is BUY with solid confidence and entry quality, and sentiment is strong across multiple sources. A positive track_record supports conviction; a negative one demands materially better current evidence.",
+        BUY: "Open a new long position only when it is not currently held, research verdict is BUY, and current market evidence supports a favorable risk-adjusted entry rather than merely a likely BUY classification. Do not let sentiment quantity replace technical confirmation. A negative track_record requires materially stronger current evidence.",
         SELL: "Exit the currently held position. Appropriate only when the symbol is currently held and shows deteriorating sentiment, red flags, or hits the stop-loss/take-profit rules. Do not sell solely because gains are small; a strong positive track_record argues for patience.",
         HOLD: "Take no action on this symbol.",
       },
@@ -226,7 +309,8 @@ export function mapJevAnalystAnswers(
     const rec: JevAnalystRecommendation = {
       action,
       symbol: candidate.symbol,
-      confidence: probability,
+      confidence: answer.confidence,
+      action_probability: probability,
       reasoning: `jev: ${distribution} (confidence ${answer.confidence.toFixed(2)})`,
     };
 
@@ -238,7 +322,11 @@ export function mapJevAnalystAnswers(
       }
     }
 
-    if (action !== "HOLD" && probability >= HIGH_CONVICTION_THRESHOLD) {
+    if (
+      action !== "HOLD" &&
+      probability >= HIGH_CONVICTION_THRESHOLD &&
+      answer.confidence >= HIGH_CONVICTION_THRESHOLD
+    ) {
       highConviction.push(candidate.symbol);
     }
 

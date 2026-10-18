@@ -86,7 +86,7 @@ import { safeValidateAgentConfig } from "../schemas/agent-config";
 import { createD1Client } from "../storage/d1/client";
 import { queryDecisionOutcomes } from "../storage/d1/queries/decision-outcomes";
 import { getTradeDecisionStats, insertTradeDecision, queryTradeDecisions } from "../storage/d1/queries/trade-decisions";
-import { createTrade } from "../storage/d1/queries/trades";
+import { createTrade, getTradeByAlpacaOrderId } from "../storage/d1/queries/trades";
 import { createR2Client } from "../storage/r2/client";
 import { R2Paths } from "../storage/r2/paths";
 import { activeStrategy } from "../strategy";
@@ -104,6 +104,8 @@ interface TechnicalDataCacheEntry {
   sma_50?: number;
   atr?: number;
   relative_volume?: number;
+  daily_bars?: number;
+  hourly_bars?: number;
 }
 
 interface MomentumDataCacheEntry {
@@ -591,9 +593,31 @@ export class MahoragaHarness extends DurableObject<Env> {
             const ep = pos.avg_entry_price || pos.current_price;
             const plPct = ep > 0 ? ((pos.current_price - ep) / ep) * 100 : 0;
             if (plPct >= this.state.config.options_take_profit_pct) {
-              await ctx.broker.sell(pos.symbol, `Options take profit at +${plPct.toFixed(1)}%`);
+              const reason = `Options take profit at +${plPct.toFixed(1)}%`;
+              const result = await ctx.broker.sell(pos.symbol, reason);
+              await this.recordTradeDecision({
+                source: "options_exit",
+                symbol: pos.symbol,
+                action: "SELL",
+                status: result.submitted ? "submitted" : "blocked",
+                reason,
+                pnlPct: plPct,
+                metadata: { ...(result.metadata ?? {}), ...(result.reason ? { reason: result.reason } : {}) },
+                snapshot: this.buildTradeDecisionSnapshot(pos.symbol, { positions, option_position: pos }),
+              });
             } else if (plPct <= -this.state.config.options_stop_loss_pct) {
-              await ctx.broker.sell(pos.symbol, `Options stop loss at ${plPct.toFixed(1)}%`);
+              const reason = `Options stop loss at ${plPct.toFixed(1)}%`;
+              const result = await ctx.broker.sell(pos.symbol, reason);
+              await this.recordTradeDecision({
+                source: "options_exit",
+                symbol: pos.symbol,
+                action: "SELL",
+                status: result.submitted ? "submitted" : "blocked",
+                reason,
+                pnlPct: plPct,
+                metadata: { ...(result.metadata ?? {}), ...(result.reason ? { reason: result.reason } : {}) },
+                snapshot: this.buildTradeDecisionSnapshot(pos.symbol, { positions, option_position: pos }),
+              });
             }
           }
         }
@@ -1376,6 +1400,8 @@ export class MahoragaHarness extends DurableObject<Env> {
               sma_50: technicals.sma_50 ?? undefined,
               atr: technicals.atr_14 ?? undefined,
               relative_volume: technicals.relative_volume ?? undefined,
+              daily_bars: dailyBars.length,
+              hourly_bars: hourlyBars.length,
             };
             if (technicals.atr_14 !== null) {
               nextAtrCache[symbol] = technicals.atr_14;
@@ -1681,13 +1707,14 @@ export class MahoragaHarness extends DurableObject<Env> {
       action: "BUY" | "SELL" | "HOLD";
       symbol: string;
       confidence: number;
+      action_probability?: number;
       reasoning: string;
       suggested_size_pct?: number;
     }>;
     market_summary: string;
     high_conviction: string[];
   }> {
-    if (signals.length === 0) {
+    if (signals.length === 0 && positions.length === 0) {
       return { recommendations: [], market_summary: "No signals to analyze", high_conviction: [] };
     }
 
@@ -1713,6 +1740,7 @@ export class MahoragaHarness extends DurableObject<Env> {
           action: "BUY" | "SELL" | "HOLD";
           symbol: string;
           confidence: number;
+          action_probability?: number;
           reasoning: string;
           suggested_size_pct?: number;
         }>;
@@ -1754,6 +1782,7 @@ export class MahoragaHarness extends DurableObject<Env> {
       action: "BUY" | "SELL" | "HOLD";
       symbol: string;
       confidence: number;
+      action_probability: number;
       reasoning: string;
       suggested_size_pct?: number;
     }>;
@@ -1773,6 +1802,11 @@ export class MahoragaHarness extends DurableObject<Env> {
         account,
         research: this.state.signalResearch,
         positionEntries: this.state.positionEntries,
+        marketContext: this.buildJevMarketContext(),
+        marketRegime:
+          ((this.state as unknown as Record<string, unknown>).marketRegimeCache as
+            | Record<string, unknown>
+            | undefined) ?? null,
         config: this.state.config,
         memory: this.getDecisionMemory(),
       });
@@ -1793,6 +1827,80 @@ export class MahoragaHarness extends DurableObject<Env> {
       this.log("Analyst", "error", { engine: "jev", message: String(error) });
       return { recommendations: [], market_summary: `Jev analysis failed: ${error}`, high_conviction: [] };
     }
+  }
+
+  private buildJevMarketContext(): Record<
+    string,
+    {
+      updated_at: number;
+      current_price?: number;
+      rsi?: number;
+      sma_20?: number;
+      sma_50?: number;
+      atr?: number;
+      relative_volume?: number;
+      daily_bars?: number;
+      hourly_bars?: number;
+      price_change_1h?: number;
+      price_change_24h?: number;
+      sector?: string;
+    }
+  > {
+    const dynamicState = this.state as unknown as Record<string, unknown>;
+    const technical = dynamicState.technicalDataCache as
+      | Record<
+          string,
+          {
+            updated_at: number;
+            current_price?: number;
+            rsi?: number;
+            sma_20?: number;
+            sma_50?: number;
+            atr?: number;
+            relative_volume?: number;
+            daily_bars?: number;
+            hourly_bars?: number;
+          }
+        >
+      | undefined;
+    const momentum = dynamicState.momentumDataCache as
+      | Record<
+          string,
+          {
+            updated_at: number;
+            price_change_1h?: number;
+            price_change_24h?: number;
+          }
+        >
+      | undefined;
+    const sectors = dynamicState.sectorMap as Record<string, string> | undefined;
+    const symbols = new Set([...Object.keys(technical ?? {}), ...Object.keys(momentum ?? {})]);
+    return Object.fromEntries(
+      [...symbols].map((symbol) => {
+        const tech = technical?.[symbol];
+        const mom = momentum?.[symbol];
+        const updateTimes = [tech?.updated_at, mom?.updated_at].filter(
+          (value): value is number => typeof value === "number" && value > 0
+        );
+        return [
+          symbol,
+          {
+            updated_at: updateTimes.length ? Math.min(...updateTimes) : 0,
+            current_price: tech?.current_price,
+            rsi: tech?.rsi,
+            sma_20: tech?.sma_20,
+            sma_50: tech?.sma_50,
+            atr: tech?.atr,
+            relative_volume: tech?.relative_volume,
+            daily_bars: tech?.daily_bars,
+            hourly_bars: tech?.hourly_bars,
+            price_change_1h: mom?.price_change_1h,
+            price_change_24h: mom?.price_change_24h,
+            sector: sectors?.[symbol],
+          },
+        ];
+      })
+    );
   }
 
   private static readonly DECISION_MEMORY_TTL_MS = 15 * 60 * 1000;
@@ -1845,8 +1953,15 @@ export class MahoragaHarness extends DurableObject<Env> {
     const exits = activeStrategy.selectExits(ctx, positions, account);
     for (const exit of exits) {
       const result = await ctx.broker.sell(exit.symbol, exit.reason);
-      await this.recordExitDecision("strategy_exit", exit, result ? "submitted" : "blocked", account, positions);
-      if (result) {
+      await this.recordExitDecision(
+        "strategy_exit",
+        exit,
+        result.submitted ? "submitted" : "blocked",
+        account,
+        positions,
+        { ...(result.metadata ?? {}), ...(result.reason ? { reason: result.reason } : {}) }
+      );
+      if (result.submitted) {
         heldSymbols.delete(exit.symbol);
         this.setAnalystBuyCooldown(exit.symbol);
       }
@@ -1858,14 +1973,17 @@ export class MahoragaHarness extends DurableObject<Env> {
       this.log("Analyst", "skipped_max_positions", {
         positions: currentOpenPositions,
         max: this.state.config.max_positions,
+        note: "Continue to evaluate existing positions for exits",
       });
-      return;
     }
 
     const stockSignals = this.getStockSignals();
     if (stockSignals.length === 0) {
-      this.log("Analyst", "skipped_no_signals", { signal_cache_size: 0 });
-      return;
+      this.log("Analyst", "no_entry_signals", {
+        signal_cache_size: 0,
+        held_positions: positions.length,
+        note: "Continue to evaluate held positions for exits",
+      });
     }
 
     // Strategy entry decisions from cached research
@@ -1877,7 +1995,7 @@ export class MahoragaHarness extends DurableObject<Env> {
         research_interval_ms: 120_000,
       });
     }
-    const entries = activeStrategy.selectEntries(ctx, research, positions, account);
+    const entries = stockSignals.length > 0 ? activeStrategy.selectEntries(ctx, research, positions, account) : [];
 
     for (const entry of entries) {
       if (heldSymbols.has(entry.symbol)) continue;
@@ -1953,13 +2071,15 @@ export class MahoragaHarness extends DurableObject<Env> {
             source: "strategy_entry_options",
             symbol: contract.symbol,
             action: "BUY",
-            status: result ? "submitted" : "blocked",
+            status: result.submitted ? "submitted" : "blocked",
             confidence: finalConfidence,
             reason: optionsReason,
-            notional: null,
+            notional: typeof result.metadata?.notional === "number" ? result.metadata.notional : null,
             metadata: {
               underlying_symbol: entry.symbol,
               max_contracts: contract.max_contracts,
+              ...(result.metadata ?? {}),
+              ...(result.reason ? { reason: result.reason } : {}),
             },
             snapshot: this.buildTradeDecisionSnapshot(entry.symbol, {
               account,
@@ -1968,7 +2088,7 @@ export class MahoragaHarness extends DurableObject<Env> {
               options_contract: contract,
             }),
           });
-          if (result) {
+          if (result.submitted) {
             heldSymbols.add(contract.symbol);
             currentOpenPositions = heldSymbols.size;
             this.state.positionEntries[contract.symbol] = this.createPositionEntry(
@@ -1994,7 +2114,7 @@ export class MahoragaHarness extends DurableObject<Env> {
         result.submitted ? "submitted" : "blocked",
         account,
         positions,
-        result.submitted ? {} : { reason: result.reason, ...(result.metadata ?? {}) }
+        { ...(result.metadata ?? {}), ...(result.reason ? { reason: result.reason } : {}) }
       );
       if (result.submitted) {
         heldSymbols.add(entry.symbol);
@@ -2021,15 +2141,17 @@ export class MahoragaHarness extends DurableObject<Env> {
       buys: analysis.recommendations.filter((r) => r.action === "BUY").length,
       sells: analysis.recommendations.filter((r) => r.action === "SELL").length,
       holds: analysis.recommendations.filter((r) => r.action === "HOLD").length,
-      min_confidence: this.state.config.min_analyst_confidence,
+      minimum_decision_score: this.state.config.min_analyst_confidence,
     });
 
     for (const rec of analysis.recommendations) {
-      if (rec.confidence < this.state.config.min_analyst_confidence) {
+      const actionScore = rec.action_probability ?? rec.confidence;
+      if (actionScore < this.state.config.min_analyst_confidence) {
         this.log("Analyst", "llm_rec_filtered_confidence", {
           action: rec.action,
           symbol: rec.symbol,
           confidence: rec.confidence,
+          action_probability: rec.action_probability,
         });
         await this.recordTradeDecision({
           source: "analyst_recommendation",
@@ -2038,7 +2160,11 @@ export class MahoragaHarness extends DurableObject<Env> {
           status: "filtered",
           confidence: rec.confidence,
           reason: rec.reasoning,
-          metadata: { reason: "below_min_confidence", min_confidence: this.state.config.min_analyst_confidence },
+          metadata: {
+            reason: "below_min_action_score",
+            minimum_decision_score: this.state.config.min_analyst_confidence,
+            ...(rec.action_probability !== undefined ? { action_probability: rec.action_probability } : {}),
+          },
           snapshot: this.buildTradeDecisionSnapshot(rec.symbol, { account, positions, recommendation: rec }),
         });
         continue;
@@ -2098,13 +2224,14 @@ export class MahoragaHarness extends DurableObject<Env> {
           source: "analyst_recommendation",
           symbol: rec.symbol,
           action: "SELL",
-          status: result ? "submitted" : "blocked",
+          status: result.submitted ? "submitted" : "blocked",
           confidence: rec.confidence,
           reason: rec.reasoning,
           pnlPct,
+          metadata: { ...(result.metadata ?? {}), ...(result.reason ? { reason: result.reason } : {}) },
           snapshot: this.buildTradeDecisionSnapshot(rec.symbol, { account, positions, recommendation: rec }),
         });
-        if (result) {
+        if (result.submitted) {
           heldSymbols.delete(rec.symbol);
           this.setAnalystBuyCooldown(rec.symbol);
           this.log("Analyst", "llm_sell_executed", {
@@ -2169,7 +2296,6 @@ export class MahoragaHarness extends DurableObject<Env> {
         }
 
         const guardParams = {
-          allowWaitResearch: true,
           momentum: momentumCache?.[rec.symbol] ?? null,
           cooldownUntil: this.getAnalystBuyCooldown(rec.symbol),
           now: Date.now(),
@@ -2292,8 +2418,9 @@ export class MahoragaHarness extends DurableObject<Env> {
           reason: rec.reasoning,
           notional,
           metadata: {
+            ...(result.metadata ?? {}),
             suggested_size_pct: rec.suggested_size_pct,
-            ...(result.submitted ? {} : { reason: result.reason, ...(result.metadata ?? {}) }),
+            ...(result.reason ? { reason: result.reason } : {}),
           },
           snapshot: this.buildTradeDecisionSnapshot(rec.symbol, {
             account,
@@ -2326,7 +2453,7 @@ export class MahoragaHarness extends DurableObject<Env> {
     const [account, positions] = await Promise.all([ctx.broker.getAccount(), ctx.broker.getPositions()]);
 
     const stockSignals = this.getStockSignals();
-    if (!account || stockSignals.length === 0) return;
+    if (!account) return;
 
     this.log("System", "premarket_analysis_starting", {
       signals: stockSignals.length,
@@ -2342,6 +2469,7 @@ export class MahoragaHarness extends DurableObject<Env> {
         action: r.action,
         symbol: r.symbol,
         confidence: r.confidence,
+        action_probability: r.action_probability,
         reasoning: r.reasoning,
         suggested_size_pct: r.suggested_size_pct,
       })),
@@ -2385,18 +2513,24 @@ export class MahoragaHarness extends DurableObject<Env> {
 
     // Sells first
     for (const rec of this.state.premarketPlan.recommendations) {
-      if (rec.action === "SELL" && rec.confidence >= this.state.config.min_analyst_confidence) {
+      const actionScore = rec.action_probability ?? rec.confidence;
+      if (rec.action === "SELL" && actionScore >= this.state.config.min_analyst_confidence) {
         const result = await ctx.broker.sell(rec.symbol, `Pre-market plan: ${rec.reasoning}`);
         await this.recordTradeDecision({
           source: "premarket_plan",
           symbol: rec.symbol,
           action: "SELL",
-          status: result ? "submitted" : "blocked",
+          status: result.submitted ? "submitted" : "blocked",
           confidence: rec.confidence,
           reason: rec.reasoning,
+          metadata: {
+            ...(rec.action_probability !== undefined ? { action_probability: rec.action_probability } : {}),
+            ...(result.metadata ?? {}),
+            ...(result.reason ? { reason: result.reason } : {}),
+          },
           snapshot: this.buildTradeDecisionSnapshot(rec.symbol, { account, positions, recommendation: rec }),
         });
-        if (result) this.setAnalystBuyCooldown(rec.symbol);
+        if (result.submitted) this.setAnalystBuyCooldown(rec.symbol);
       }
     }
 
@@ -2404,13 +2538,13 @@ export class MahoragaHarness extends DurableObject<Env> {
     const dynamicState = this.state as unknown as Record<string, unknown>;
     const momentumCache = dynamicState.momentumDataCache as Record<string, MomentumDataCacheEntry> | undefined;
     for (const rec of this.state.premarketPlan.recommendations) {
-      if (rec.action === "BUY" && rec.confidence >= this.state.config.min_analyst_confidence) {
+      const actionScore = rec.action_probability ?? rec.confidence;
+      if (rec.action === "BUY" && actionScore >= this.state.config.min_analyst_confidence) {
         if (heldSymbols.has(rec.symbol)) continue;
         if (positions.length >= this.state.config.max_positions) break;
 
         const guard = evaluateAnalystBuyGuard({
           research: this.state.signalResearch[rec.symbol] ?? null,
-          allowWaitResearch: true,
           momentum: momentumCache?.[rec.symbol] ?? null,
           cooldownUntil: this.getAnalystBuyCooldown(rec.symbol),
           now: Date.now(),
@@ -2426,7 +2560,11 @@ export class MahoragaHarness extends DurableObject<Env> {
             status: "blocked",
             confidence: rec.confidence,
             reason: rec.reasoning,
-            metadata: { reason: guard.reason, ...(guard.metadata ?? {}) },
+            metadata: {
+              ...(rec.action_probability !== undefined ? { action_probability: rec.action_probability } : {}),
+              reason: guard.reason,
+              ...(guard.metadata ?? {}),
+            },
             snapshot: this.buildTradeDecisionSnapshot(rec.symbol, { account, positions, recommendation: rec }),
           });
           continue;
@@ -2444,7 +2582,11 @@ export class MahoragaHarness extends DurableObject<Env> {
             status: "blocked",
             confidence: rec.confidence,
             reason: rec.reasoning,
-            metadata: { reason: entryQuality.reason, ...(entryQuality.metadata ?? {}) },
+            metadata: {
+              ...(rec.action_probability !== undefined ? { action_probability: rec.action_probability } : {}),
+              reason: entryQuality.reason,
+              ...(entryQuality.metadata ?? {}),
+            },
             snapshot: this.buildTradeDecisionSnapshot(rec.symbol, { account, positions, recommendation: rec }),
           });
           continue;
@@ -2485,8 +2627,9 @@ export class MahoragaHarness extends DurableObject<Env> {
           reason: rec.reasoning,
           notional,
           metadata: {
+            ...(result.metadata ?? {}),
             suggested_size_pct: rec.suggested_size_pct,
-            ...(result.submitted ? {} : { reason: result.reason, ...(result.metadata ?? {}) }),
+            ...(result.reason ? { reason: result.reason } : {}),
           },
           snapshot: this.buildTradeDecisionSnapshot(rec.symbol, {
             account,
@@ -2972,8 +3115,17 @@ export class MahoragaHarness extends DurableObject<Env> {
 
     this.log("System", "after_hours_exit_sweep", { exits: exits.length });
     for (const exit of exits) {
-      const result = await ctx.broker.sell(exit.symbol, `After-hours sweep: ${exit.reason}`);
-      if (result) this.setAnalystBuyCooldown(exit.symbol);
+      const reason = `After-hours sweep: ${exit.reason}`;
+      const result = await ctx.broker.sell(exit.symbol, reason);
+      await this.recordExitDecision(
+        "after_hours_sweep",
+        exit,
+        result.submitted ? "submitted" : "blocked",
+        account,
+        positions,
+        { ...(result.metadata ?? {}), ...(result.reason ? { reason: result.reason } : {}) }
+      );
+      if (result.submitted) this.setAnalystBuyCooldown(exit.symbol);
     }
   }
 
@@ -3324,6 +3476,15 @@ export class MahoragaHarness extends DurableObject<Env> {
 
     try {
       const db = createD1Client(this.env.DB);
+      const recommendation = params.snapshot?.recommendation as { action_probability?: unknown } | undefined;
+      const actionProbability =
+        typeof recommendation?.action_probability === "number" ? recommendation.action_probability : undefined;
+      const metadata =
+        actionProbability === undefined
+          ? (params.metadata ?? null)
+          : { ...(params.metadata ?? {}), action_probability: actionProbability };
+      const alpacaOrderId = typeof params.metadata?.order_id === "string" ? params.metadata.order_id : null;
+      const trade = alpacaOrderId ? await getTradeByAlpacaOrderId(db, alpacaOrderId).catch(() => null) : null;
       await insertTradeDecision(db, {
         id,
         cycle_id: this.getDecisionCycleId(),
@@ -3337,8 +3498,9 @@ export class MahoragaHarness extends DurableObject<Env> {
         notional: params.notional,
         price: params.price,
         pnl_pct: params.pnlPct,
+        trade_id: trade?.id ?? null,
         snapshot_r2_key: snapshotR2Key,
-        metadata: params.metadata ?? null,
+        metadata,
       });
     } catch (error) {
       console.warn("[TradeDecision] Failed to persist D1 row", error);

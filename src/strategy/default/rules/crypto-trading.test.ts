@@ -217,7 +217,7 @@ describe("crypto trading", () => {
       sleep: async () => {},
       broker: {
         buy,
-        sell: vi.fn(async () => true),
+        sell: vi.fn(async () => ({ submitted: true })),
         getAccount: vi.fn(async () => ({ cash: 10000, buying_power: 10000 })),
       },
       state: {
@@ -282,7 +282,7 @@ describe("crypto trading", () => {
       sleep: async () => {},
       broker: {
         buy,
-        sell: vi.fn(async () => true),
+        sell: vi.fn(async () => ({ submitted: true })),
         getAccount: vi.fn(async () => ({ cash: 10000, buying_power: 10000 })),
       },
       state: {
@@ -338,7 +338,7 @@ describe("crypto trading", () => {
       sleep: async () => {},
       broker: {
         buy,
-        sell: vi.fn(async () => true),
+        sell: vi.fn(async () => ({ submitted: true })),
         getAccount: vi.fn(async () => ({ cash: 10000, buying_power: 10000 })),
       },
       state: {
@@ -397,7 +397,7 @@ describe("crypto trading", () => {
         log: () => {},
         broker: {
           buy,
-          sell: vi.fn(async () => true),
+          sell: vi.fn(async () => ({ submitted: true })),
           getAccount: vi.fn(async () => ({ buying_power: 10000 })),
         },
         state: {
@@ -452,7 +452,7 @@ describe("crypto trading", () => {
         log: () => {},
         broker: {
           buy,
-          sell: vi.fn(async () => true),
+          sell: vi.fn(async () => ({ submitted: true })),
           getAccount: vi.fn(async () => ({ buying_power: 10000 })),
         },
         state: {
@@ -496,7 +496,7 @@ describe("crypto trading", () => {
         log: () => {},
         broker: {
           buy,
-          sell: vi.fn(async () => true),
+          sell: vi.fn(async () => ({ submitted: true })),
           getAccount: vi.fn(async () => ({ buying_power: 10000 })),
         },
         state: {

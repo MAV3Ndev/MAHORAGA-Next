@@ -72,19 +72,36 @@ export async function queryUnlabeledDecisions(
 ): Promise<UnlabeledDecisionRow[]> {
   const { lookbackDays = 90, limit = 300 } = params;
   const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+  const unavailableRetryCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const utcToday = new Date().toISOString().slice(0, 10);
 
   return db.execute<UnlabeledDecisionRow>(
-    `SELECT d.*, o.features_json AS existing_features_json FROM trade_decisions d
-     LEFT JOIN decision_outcomes o ON o.decision_id = d.id
-     WHERE d.decision_at >= ?
-       AND (
-         o.decision_id IS NULL
-         OR o.label_status = 'partial'
-         OR (o.label_status = 'unavailable' AND o.labeled_at >= ?)
-       )
-     ORDER BY CASE WHEN d.action IN ('BUY', 'SELL') THEN 0 ELSE 1 END, d.decision_at DESC
+    `WITH eligible AS (
+       SELECT d.*, o.features_json AS existing_features_json,
+         CASE WHEN o.decision_id IS NULL THEN 0 ELSE 1 END AS retry_group
+       FROM trade_decisions d
+       LEFT JOIN decision_outcomes o ON o.decision_id = d.id
+       WHERE d.decision_at >= ?
+         AND (
+           o.decision_id IS NULL
+           OR (o.label_status = 'partial' AND date(o.labeled_at) < date(?))
+           OR (o.label_status = 'unavailable' AND d.decision_at >= ? AND date(o.labeled_at) < date(?))
+         )
+     ), ranked AS (
+       SELECT eligible.*, ROW_NUMBER() OVER (
+         PARTITION BY retry_group ORDER BY decision_at ASC, id ASC
+       ) AS group_rank
+       FROM eligible
+     )
+     SELECT * FROM ranked
+     WHERE group_rank <= CASE
+       WHEN EXISTS (SELECT 1 FROM eligible WHERE retry_group = 1)
+         THEN MAX(1, ? / 2)
+       ELSE ?
+     END
+     ORDER BY retry_group ASC, decision_at ASC, id ASC
      LIMIT ?`,
-    [cutoff, new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), limit]
+    [cutoff, utcToday, unavailableRetryCutoff, utcToday, limit, limit, limit]
   );
 }
 

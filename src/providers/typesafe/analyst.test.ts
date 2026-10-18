@@ -109,6 +109,23 @@ describe("buildJevAnalystRequest", () => {
       account: makeAccount(),
       research: { AAPL: makeResearch() },
       positionEntries: {},
+      marketContext: {
+        AAPL: {
+          updated_at: NOW - 5 * 60_000,
+          current_price: 190,
+          rsi: 62,
+          sma_20: 185,
+          sma_50: 180,
+          atr: 4,
+          relative_volume: 1.4,
+          daily_bars: 250,
+          hourly_bars: 30,
+          price_change_1h: 0.5,
+          price_change_24h: 2.1,
+          sector: "technology",
+        },
+      },
+      marketRegime: { spyPrice: 500, spySma50: 495, qqqPrice: 430, qqqSma50: 428 },
       config: CONFIG,
       now: NOW,
     });
@@ -127,6 +144,23 @@ describe("buildJevAnalystRequest", () => {
     const candidateState = (state.candidates as Array<{ symbol: string; research: unknown }>)[0];
     expect(candidateState?.symbol).toBe("AAPL");
     expect(candidateState?.research).toMatchObject({ verdict: "BUY", entry_quality: "good" });
+    expect(candidateState).toMatchObject({
+      market_context: {
+        cache_freshness: "fresh",
+        technical_data_quality: "sufficient_history",
+        daily_bars: 250,
+        price_vs_sma_20_pct: expect.closeTo(2.7, 1),
+        price_vs_sma_50_pct: expect.closeTo(5.6, 1),
+        atr_pct: expect.closeTo(2.1, 1),
+        momentum_1h_pct: 0.5,
+        momentum_24h_pct: 2.1,
+        sector: "technology",
+      },
+    });
+    expect(state.market_regime).toMatchObject({
+      spy: { price_vs_sma_50_pct: expect.closeTo(1.01, 2) },
+      qqq: { price_vs_sma_50_pct: expect.closeTo(0.47, 2) },
+    });
   });
 
   it("marks candidates without research as null in state", () => {
@@ -151,7 +185,7 @@ describe("mapJevAnalystAnswers", () => {
     { symbol: "TSLA", avgSentiment: 0.6, sources: ["stocktwits"], count: 1, held: true },
   ];
 
-  it("maps choice answers to recommendations with probabilities as confidence", () => {
+  it("keeps selected-action probability separate from model confidence", () => {
     const result = mapJevAnalystAnswers(candidates, {
       action_0: {
         type: "choice",
@@ -178,13 +212,15 @@ describe("mapJevAnalystAnswers", () => {
     expect(result.recommendations[0]).toMatchObject({
       action: "BUY",
       symbol: "AAPL",
-      confidence: 0.72,
+      confidence: 0.66,
+      action_probability: 0.72,
       suggested_size_pct: 20, // round(1.4) → level 1 → 20%
     });
     expect(result.recommendations[1]).toMatchObject({
       action: "HOLD",
       symbol: "TSLA",
-      confidence: 0.6,
+      confidence: 0.5,
+      action_probability: 0.6,
     });
     expect(result.recommendations[1]?.suggested_size_pct).toBeUndefined();
     expect(result.market_summary).toContain("1 BUY");
@@ -196,7 +232,7 @@ describe("mapJevAnalystAnswers", () => {
         type: "choice",
         choice: "BUY",
         probabilities: { BUY: 0.85, SELL: 0.05, HOLD: 0.1 },
-        confidence: 0.8,
+        confidence: 0.4,
       },
       action_1: {
         type: "choice",
@@ -206,7 +242,7 @@ describe("mapJevAnalystAnswers", () => {
       },
     });
 
-    expect(result.high_conviction).toEqual(["AAPL"]);
+    expect(result.high_conviction).toEqual([]);
   });
 
   it("treats unexpected choice values as HOLD and skips missing answers", () => {

@@ -45,6 +45,7 @@ export const REPORT_FEATURES = [
   "research_confidence",
   "entry_quality_score",
   "analyst_confidence",
+  "action_probability",
   "jev_prob_action",
   "prompt_sentiment",
   "rsi",
@@ -52,6 +53,9 @@ export const REPORT_FEATURES = [
   "mom_24h",
   "rel_volume",
   "atr",
+  "daily_bars",
+  "hourly_bars",
+  "market_context_cache_age_minutes",
 ] as const;
 
 export const MIN_IC_SAMPLE = 30;
@@ -258,6 +262,20 @@ export interface CalibrationResult {
   n: number;
 }
 
+export interface ActionBreakdown {
+  action: string;
+  n: number;
+  t1_n: number;
+  mean_t1: number | null;
+  win_rate_t1: number | null;
+  t5_n: number;
+  mean_t5: number | null;
+  win_rate_t5: number | null;
+  t20_n: number;
+  mean_t20: number | null;
+  win_rate_t20: number | null;
+}
+
 export interface IndicatorReport {
   generated_at: string;
   window_days: number;
@@ -266,6 +284,7 @@ export interface IndicatorReport {
   ic: IndicatorICResult[];
   quantiles: QuantileResult[];
   calibration: CalibrationResult[];
+  by_action: ActionBreakdown[];
   by_source: SourceBreakdown[];
   gates: GateBreakdown[];
 }
@@ -278,7 +297,12 @@ function directionSign(action: string): number {
 }
 
 function numericFeature(sample: OutcomeSample, name: string): number | null {
-  const raw = name === "confidence" ? sample.confidence : sample.features[name];
+  const raw =
+    name === "confidence"
+      ? typeof sample.features.analyst_confidence === "number"
+        ? sample.features.analyst_confidence
+        : sample.confidence
+      : sample.features[name];
   return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
 }
 
@@ -307,6 +331,42 @@ function mean(values: Array<number | null>): number | null {
 
 export function buildIndicatorReport(samples: OutcomeSample[], opts: { days: number; now?: Date }): IndicatorReport {
   const directional = samples.filter((s) => directionSign(s.action) !== 0);
+
+  const byAction = new Map<string, OutcomeSample[]>();
+  for (const sample of samples) {
+    const action = sample.action.toUpperCase();
+    const rows = byAction.get(action) ?? [];
+    rows.push(sample);
+    byAction.set(action, rows);
+  }
+  const by_action: ActionBreakdown[] = [...byAction.entries()]
+    .map(([action, rows]) => {
+      const stats = (horizon: Horizon) => {
+        const returns = rows.map((row) => row[horizon]).filter((value): value is number => value !== null);
+        return {
+          n: returns.length,
+          mean: mean(returns),
+          win_rate: returns.length ? returns.filter((value) => value > 0).length / returns.length : null,
+        };
+      };
+      const t1 = stats("t1_return");
+      const t5 = stats("t5_return");
+      const t20 = stats("t20_return");
+      return {
+        action,
+        n: rows.length,
+        t1_n: t1.n,
+        mean_t1: t1.mean,
+        win_rate_t1: t1.win_rate,
+        t5_n: t5.n,
+        mean_t5: t5.mean,
+        win_rate_t5: t5.win_rate,
+        t20_n: t20.n,
+        mean_t20: t20.mean,
+        win_rate_t20: t20.win_rate,
+      };
+    })
+    .sort((a, b) => a.action.localeCompare(b.action));
 
   const ic: IndicatorICResult[] = [];
   const quantiles: QuantileResult[] = [];
@@ -341,8 +401,11 @@ export function buildIndicatorReport(samples: OutcomeSample[], opts: { days: num
   for (const [engine, rows] of engines) {
     for (const horizon of HORIZONS) {
       const pairs = rows
-        .filter((s) => s.confidence !== null && s[horizon] !== null)
-        .map((s) => ({ confidence: s.confidence as number, ret: (s[horizon] as number) * directionSign(s.action) }));
+        .filter((s) => numericFeature(s, "confidence") !== null && s[horizon] !== null)
+        .map((s) => ({
+          confidence: numericFeature(s, "confidence") as number,
+          ret: (s[horizon] as number) * directionSign(s.action),
+        }));
       if (pairs.length >= MIN_QUANTILE_SAMPLE) {
         calibration.push({ engine, horizon, buckets: calibrationBuckets(pairs, 5), n: pairs.length });
       }
@@ -409,6 +472,7 @@ export function buildIndicatorReport(samples: OutcomeSample[], opts: { days: num
     ic,
     quantiles,
     calibration,
+    by_action,
     by_source,
     gates,
   };

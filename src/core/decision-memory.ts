@@ -51,6 +51,14 @@ export interface FeatureLesson {
   n: number;
 }
 
+export interface ActionLesson {
+  action: string;
+  n: number;
+  mean_t1: number | null;
+  mean_t5: number | null;
+  win_rate_t1: number | null;
+}
+
 export interface DecisionMemory {
   generated_at: string;
   window_days: number;
@@ -65,10 +73,12 @@ export interface DecisionMemory {
   symbols: Record<string, SymbolTrackRecord>;
   gate_lessons: GateLesson[];
   feature_lessons: FeatureLesson[];
+  action_lessons: ActionLesson[];
 }
 
 const MIN_GATE_LESSON_SAMPLE = 5;
 const MIN_FEATURE_LESSON_IC = 0.1;
+const MIN_ACTION_LESSON_SAMPLE = 5;
 const MAX_SYMBOL_RECORDS = 30;
 
 function directionSign(action: string): number {
@@ -175,6 +185,16 @@ export async function buildDecisionMemory(
     },
     symbols: aggregateSymbolTrackRecords(samples),
     gate_lessons: report.gates.filter((g) => g.n >= MIN_GATE_LESSON_SAMPLE).slice(0, 10),
+    action_lessons: report.by_action
+      .filter((row) => row.n >= MIN_ACTION_LESSON_SAMPLE)
+      .slice(0, 8)
+      .map((row) => ({
+        action: row.action,
+        n: row.n,
+        mean_t1: row.mean_t1,
+        mean_t5: row.mean_t5,
+        win_rate_t1: row.win_rate_t1,
+      })),
     feature_lessons: report.ic
       .filter((r) => r.sufficient_sample && Math.abs(r.ic) >= MIN_FEATURE_LESSON_IC)
       .sort((a, b) => Math.abs(b.ic) - Math.abs(a.ic))
@@ -229,6 +249,15 @@ export function formatDecisionMemoryBlock(memory: DecisionMemory): string {
     for (const f of memory.feature_lessons.slice(0, 6)) {
       const horizon = f.horizon === "t1_return" ? "T+1" : f.horizon === "t5_return" ? "T+5" : "T+20";
       lines.push(`  - ${f.feature}: IC ${f.ic >= 0 ? "+" : ""}${f.ic.toFixed(2)} @${horizon} (n=${f.n})`);
+    }
+  }
+
+  if (memory.action_lessons.length > 0) {
+    lines.push("Measured outcomes by decision label (raw forward return; WAIT/SKIP show what abstention avoided or missed):");
+    for (const lesson of memory.action_lessons.slice(0, 8)) {
+      lines.push(
+        `  - ${lesson.action}: n=${lesson.n}, avg T+1 ${pctDec(lesson.mean_t1)}, avg T+5 ${pctDec(lesson.mean_t5)}, win ${lesson.win_rate_t1 !== null ? `${(lesson.win_rate_t1 * 100).toFixed(0)}%` : "n/a"}`
+      );
     }
   }
 

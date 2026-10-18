@@ -80,12 +80,27 @@ describe("extractDecisionFeatures", () => {
       social_snapshot: { volume: 15, sentiment: 0.45 },
       social_zscore: { volume_z: 2.1, sentiment_z: 1.3 },
       signal_research: { confidence: 0.8, entry_quality: "good", sentiment: 0.5 },
-      recommendation: { action: "BUY", confidence: 0.72, reasoning: "jev: BUY=0.72 SELL=0.08 HOLD=0.20" },
+      recommendation: {
+        action: "BUY",
+        confidence: 0.66,
+        action_probability: 0.72,
+        reasoning: "jev: BUY=0.72 SELL=0.08 HOLD=0.20 (confidence 0.66)",
+      },
       prompt_inputs: { sentiment: 0.5, price: 123.4 },
-      technicals: { rsi: 47, relative_volume: 1.8, atr: 2.2 },
+      technicals: {
+        updated_at: Date.parse("2025-01-07T14:30:00Z"),
+        daily_bars: 250,
+        hourly_bars: 30,
+        rsi: 47,
+        relative_volume: 1.8,
+        atr: 2.2,
+      },
       momentum: { price_change_1h: 0.5, price_change_24h: -1.2 },
     };
-    const f = extractDecisionFeatures({ action: "BUY", status: "submitted" }, snapshot);
+    const f = extractDecisionFeatures(
+      { action: "BUY", status: "submitted", decision_at: "2025-01-07T15:00:00Z" },
+      snapshot
+    );
     expect(f.analyst_engine).toBe("jev");
     expect(f.signal_count).toBe(2);
     expect(f.signal_sentiment).toBeCloseTo(0.4);
@@ -96,10 +111,14 @@ describe("extractDecisionFeatures", () => {
     expect(f.social_volume_z).toBeCloseTo(2.1);
     expect(f.research_confidence).toBe(0.8);
     expect(f.entry_quality_score).toBe(3);
-    expect(f.analyst_confidence).toBe(0.72);
+    expect(f.analyst_confidence).toBe(0.66);
+    expect(f.action_probability).toBeCloseTo(0.72);
     expect(f.jev_prob_action).toBeCloseTo(0.72);
     expect(f.prompt_sentiment).toBe(0.5);
     expect(f.rsi).toBe(47);
+    expect(f.daily_bars).toBe(250);
+    expect(f.hourly_bars).toBe(30);
+    expect(f.market_context_cache_age_minutes).toBeCloseTo(30);
     expect(f.rel_volume).toBe(1.8);
     expect(f.mom_24h).toBe(-1.2);
   });

@@ -27,7 +27,7 @@ import { createR2Client } from "../storage/r2/client";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** ~20 trading days in calendar days; beyond this a missing T+20 is a data gap, not pending. */
-const T20_EXPECTED_MS = 28 * DAY_MS;
+const T20_MAX_WAIT_MS = 45 * DAY_MS;
 
 export interface ForwardReturns {
   baseline_price: number;
@@ -117,28 +117,38 @@ export function parseJevDistribution(reason: string | null | undefined): Record<
   return Object.keys(out).length > 0 ? out : null;
 }
 
+function parseJevModelConfidence(reason: string | null | undefined): number | null {
+  if (!reason || !reason.startsWith("jev:")) return null;
+  const match = /\(confidence\s+([0-9.]+)\)/i.exec(reason);
+  if (!match) return null;
+  const value = Number.parseFloat(match[1]!);
+  return Number.isFinite(value) ? value : null;
+}
+
 /**
  * Extract numeric/categorical indicator features from a decision row and its
  * R2 snapshot. Missing data simply produces absent keys — the report only
  * evaluates features that are present.
  */
 export function extractDecisionFeatures(
-  row: { action: string; status: string; metadata_json?: string | null; reason?: string | null },
+  row: { action: string; status: string; decision_at?: string; metadata_json?: string | null; reason?: string | null },
   snapshot: unknown
 ): Record<string, unknown> {
   const features: Record<string, unknown> = {};
 
   const metadata = parseJsonObject(row.metadata_json);
   if (typeof metadata?.reason === "string") features.gate_reason = metadata.reason;
+  const metadataActionProbability = num(metadata?.action_probability);
+  if (metadataActionProbability !== null) features.action_probability = metadataActionProbability;
 
   const rowJevDist = parseJevDistribution(row.reason);
+  const rowJevActionProbability = rowJevDist?.[row.action.toUpperCase()];
+  const rowJevModelConfidence = parseJevModelConfidence(row.reason);
 
   const snap = asRecord(snapshot);
   if (!snap) {
-    if (rowJevDist) {
-      const p = rowJevDist[row.action.toUpperCase()];
-      if (p !== undefined) features.jev_prob_action = p;
-    }
+    if (rowJevActionProbability !== undefined) features.jev_prob_action = rowJevActionProbability;
+    if (rowJevModelConfidence !== null) features.analyst_confidence = rowJevModelConfidence;
     return features;
   }
 
@@ -188,8 +198,12 @@ export function extractDecisionFeatures(
 
   const rec = asRecord(snap.recommendation);
   if (rec) {
-    const ac = num(rec.confidence);
+    const reasoning = typeof rec.reasoning === "string" ? rec.reasoning : null;
+    const isJev = reasoning?.startsWith("jev:") ?? false;
+    const ac = isJev ? (parseJevModelConfidence(reasoning) ?? num(rec.confidence)) : num(rec.confidence);
     if (ac !== null) features.analyst_confidence = ac;
+    const actionProbability = num(rec.action_probability);
+    if (actionProbability !== null) features.action_probability = actionProbability;
     if (typeof rec.action === "string") features.recommendation_action = rec.action;
   }
 
@@ -199,6 +213,13 @@ export function extractDecisionFeatures(
   if (jevDist) {
     const p = jevDist[row.action.toUpperCase()];
     if (p !== undefined) features.jev_prob_action = p;
+  }
+  if (
+    metadataActionProbability === null &&
+    features.action_probability === undefined &&
+    rowJevActionProbability !== undefined
+  ) {
+    features.action_probability = rowJevActionProbability;
   }
 
   const promptInputs = asRecord(snap.prompt_inputs);
@@ -217,6 +238,15 @@ export function extractDecisionFeatures(
     if (rv !== null) features.rel_volume = rv;
     const atr = num(technicals.atr);
     if (atr !== null) features.atr = atr;
+    const dailyBars = num(technicals.daily_bars);
+    if (dailyBars !== null) features.daily_bars = dailyBars;
+    const hourlyBars = num(technicals.hourly_bars);
+    if (hourlyBars !== null) features.hourly_bars = hourlyBars;
+    const technicalUpdatedAt = num(technicals.updated_at);
+    const decisionAt = row.decision_at ? Date.parse(row.decision_at) : Number.NaN;
+    if (technicalUpdatedAt !== null && Number.isFinite(decisionAt)) {
+      features.market_context_cache_age_minutes = Math.max(0, (decisionAt - technicalUpdatedAt) / 60_000);
+    }
   }
 
   const momentum = asRecord(snap.momentum);
@@ -294,7 +324,7 @@ export async function labelDecisionOutcomes(
     const earliest = symbolRows.reduce((a, r) => (r.decision_at < a ? r.decision_at : a), symbolRows[0]!.decision_at);
     const startIso = new Date(Date.parse(earliest) - 3 * DAY_MS).toISOString();
     const bars = await fetchDailyBars(alpaca.marketData, symbol, startIso, nowIso);
-    const lastBarMs = bars.length ? Math.max(...bars.map((b) => Date.parse(b.t))) : 0;
+    const sortedBars = [...bars].sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
 
     for (const row of symbolRows) {
       const returns = computeForwardReturns(bars, row.decision_at, row.price);
@@ -315,8 +345,13 @@ export async function labelDecisionOutcomes(
         continue;
       }
 
-      const t20Settled = returns.t20_return !== null || lastBarMs >= decisionMs + T20_EXPECTED_MS;
-      const labelStatus = t20Settled ? "complete" : "partial";
+      const forwardBarCount = sortedBars.filter((bar) => Date.parse(bar.t) > Date.parse(returns.baseline_at)).length;
+      const t20Settled = returns.t20_return !== null || forwardBarCount >= 20;
+      const labelStatus = t20Settled
+        ? "complete"
+        : decisionMs + T20_MAX_WAIT_MS <= Date.parse(nowIso)
+          ? "unavailable"
+          : "partial";
 
       let features: Record<string, unknown> | null = null;
       if (row.existing_features_json) {

@@ -32,6 +32,7 @@ function createDeps(overrides?: {
     limit_price?: string | null;
     status?: string;
   }>;
+  optionSnapshot?: { latest_quote: { bid_price: number; ask_price: number }; greeks?: { delta?: number } };
 }) {
   const trading = {
     getAccount: vi.fn(async () => ({
@@ -82,9 +83,17 @@ function createDeps(overrides?: {
   return {
     trading,
     marketData,
-    options: {},
+    options: {
+      getSnapshot: vi.fn(async () => overrides?.optionSnapshot ?? { latest_quote: { bid_price: 1, ask_price: 1 } }),
+    },
     deps: {
-      alpaca: { trading, marketData, options: {} } as never,
+      alpaca: {
+        trading,
+        marketData,
+        options: {
+          getSnapshot: vi.fn(async () => overrides?.optionSnapshot ?? { latest_quote: { bid_price: 1, ask_price: 1 } }),
+        },
+      } as never,
       policyConfig: getDefaultPolicyConfig({} as never),
       db: null,
       log: vi.fn(),
@@ -234,6 +243,45 @@ describe("createPolicyBroker", () => {
     });
   });
 
+  it("returns option order metadata and persists it through the buy callback", async () => {
+    const { deps, trading } = createDeps({
+      clock: { timestamp: "2026-10-07T14:00:00Z", is_open: true },
+      optionSnapshot: { latest_quote: { bid_price: 1, ask_price: 1.02 }, greeks: { delta: 0.5 } },
+    });
+    deps.policyConfig = getDefaultPolicyConfig({} as never, {
+      options: { options_enabled: true },
+    });
+    const broker = createPolicyBroker(deps);
+
+    const result = await broker.buyOption("AAPL261120C00100000", 1, "Options entry");
+
+    expect(result).toEqual({
+      submitted: true,
+      metadata: {
+        order_id: "order-test-1",
+        order_status: "accepted",
+        order_type: "limit",
+        notional: 101,
+      },
+    });
+    expect(trading.createOrder).toHaveBeenCalledWith({
+      symbol: "AAPL261120C00100000",
+      qty: 1,
+      side: "buy",
+      type: "limit",
+      limit_price: 1.01,
+      time_in_force: "day",
+    });
+    expect(deps.onBuy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        symbol: "AAPL261120C00100000",
+        qty: 1,
+        notional: 101,
+        orderId: "order-test-1",
+      })
+    );
+  });
+
   it("allows the aggressive $15k position using buying power under the 20% equity cap", async () => {
     const { deps, trading } = createDeps({ clock: { is_open: true } });
     trading.getAccount.mockResolvedValue({
@@ -287,7 +335,14 @@ describe("createPolicyBroker", () => {
 
     const result = await broker.sell("SKLZ", "After-hours stop loss");
 
-    expect(result).toBe(true);
+    expect(result).toEqual({
+      submitted: true,
+      metadata: {
+        order_id: "order-test-1",
+        order_status: "accepted",
+        order_type: "limit",
+      },
+    });
     expect(marketData.getSnapshot).toHaveBeenCalledWith("SKLZ");
     expect(trading.createOrder).toHaveBeenCalledWith({
       symbol: "SKLZ",
@@ -341,7 +396,14 @@ describe("createPolicyBroker", () => {
 
     const result = await broker.sell("SKLZ", "After-hours stop loss");
 
-    expect(result).toBe(true);
+    expect(result).toEqual({
+      submitted: true,
+      metadata: {
+        order_id: "order-1",
+        order_status: "new",
+        order_type: "limit",
+      },
+    });
     expect(trading.createOrder).not.toHaveBeenCalled();
     expect(deps.log).toHaveBeenCalledWith(
       "PolicyBroker",
@@ -366,7 +428,14 @@ describe("createPolicyBroker", () => {
 
     const result = await broker.sell("SKLZ", "Regular-hours exit");
 
-    expect(result).toBe(true);
+    expect(result).toEqual({
+      submitted: true,
+      metadata: {
+        order_id: "order-close-1",
+        order_status: "accepted",
+        order_type: "market",
+      },
+    });
     expect(trading.closePosition).toHaveBeenCalledWith("SKLZ");
     expect(deps.log).toHaveBeenCalledWith(
       "PolicyBroker",

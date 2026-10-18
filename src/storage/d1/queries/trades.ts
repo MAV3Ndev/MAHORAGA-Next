@@ -57,6 +57,29 @@ export async function updateTradeStatus(
   );
 }
 
+/**
+ * Orders that have reached a terminal Alpaca state no longer need polling.
+ * Keep this list explicit so a newly introduced non-terminal state is not
+ * accidentally dropped from reconciliation.
+ */
+const TERMINAL_TRADE_STATUSES = ["filled", "canceled", "expired", "replaced", "rejected"];
+
+export async function getUnfinishedTrades(db: D1Client, limit = 100): Promise<TradeRow[]> {
+  const placeholders = TERMINAL_TRADE_STATUSES.map(() => "?").join(", ");
+  return db.execute<TradeRow>(
+    `SELECT * FROM trades
+     WHERE status NOT IN (${placeholders})
+     ORDER BY updated_at ASC, created_at ASC, id ASC
+     LIMIT ?`,
+    [...TERMINAL_TRADE_STATUSES, limit]
+  );
+}
+
+/** Move an attempted poll to the back of the next reconciliation batch. */
+export async function markTradeSyncAttempt(db: D1Client, tradeId: string): Promise<void> {
+  await db.run(`UPDATE trades SET updated_at = ? WHERE id = ?`, [nowISO(), tradeId]);
+}
+
 export async function getTradeByAlpacaOrderId(db: D1Client, alpacaOrderId: string): Promise<TradeRow | null> {
   return db.executeOne<TradeRow>(`SELECT * FROM trades WHERE alpaca_order_id = ?`, [alpacaOrderId]);
 }

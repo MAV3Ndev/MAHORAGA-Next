@@ -18,7 +18,7 @@ import type { Account, MarketClock, Order, Position, Snapshot } from "../provide
 import type { D1Client } from "../storage/d1/client";
 import type { RiskState } from "../storage/d1/queries/risk-state";
 import { getRiskState } from "../storage/d1/queries/risk-state";
-import type { StrategyContext } from "../strategy/types";
+import type { BrokerBuyResult, BrokerSellResult, StrategyContext } from "../strategy/types";
 import { areEquivalentAssetSymbols, isCryptoSymbol, normalizeCryptoSymbol } from "./asset-symbols";
 
 export interface PolicyBrokerDeps {
@@ -684,15 +684,15 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
     }
   }
 
-  async function buyOption(contractSymbol: string, quantity: number, reason: string): Promise<boolean> {
+  async function buyOption(contractSymbol: string, quantity: number, reason: string): Promise<BrokerBuyResult> {
     if (!contractSymbol || contractSymbol.trim().length === 0) {
       log("PolicyBroker", "buy_option_blocked", { reason: "Empty contract symbol" });
-      return false;
+      return { submitted: false, reason: "empty_contract_symbol" };
     }
 
     if (!Number.isInteger(quantity) || quantity <= 0) {
       log("PolicyBroker", "buy_option_blocked", { contract: contractSymbol, reason: "Invalid quantity", quantity });
-      return false;
+      return { submitted: false, reason: "invalid_quantity" };
     }
 
     const parsedContract = parseOptionsContractSymbol(contractSymbol);
@@ -701,7 +701,7 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
         contract: contractSymbol,
         reason: "Invalid options contract symbol",
       });
-      return false;
+      return { submitted: false, reason: "invalid_contract_symbol" };
     }
 
     try {
@@ -719,7 +719,7 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
           contract: contractSymbol,
           reason: "No valid options quote available",
         });
-        return false;
+        return { submitted: false, reason: "missing_options_quote" };
       }
 
       const order: OptionsOrderPreview = {
@@ -749,7 +749,7 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
           quantity,
           violations: result.violations.map((v) => v.message),
         });
-        return false;
+        return { submitted: false, reason: "policy_rejected", metadata: { violations: result.violations } };
       }
 
       if (result.warnings.length > 0) {
@@ -780,22 +780,43 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
 
       cachedAccount = null;
       cachedPositions = null;
-      return true;
+      await deps.onBuy?.({
+        symbol: contractSymbol.toUpperCase(),
+        notional: quantity * limitPrice * 100,
+        reason,
+        isCrypto: false,
+        status: String(alpacaOrder.status ?? "submitted"),
+        orderType: alpacaOrder.order_type ?? alpacaOrder.type ?? "limit",
+        orderId: alpacaOrder.id,
+        qty: quantity,
+        filledQty: parseOptionalOrderNumber(alpacaOrder.filled_qty),
+        filledAvgPrice: parseOptionalOrderNumber(alpacaOrder.filled_avg_price),
+        limitPrice,
+      });
+      return {
+        submitted: true,
+        metadata: {
+          order_id: alpacaOrder.id,
+          order_status: alpacaOrder.status,
+          order_type: alpacaOrder.order_type ?? alpacaOrder.type ?? "limit",
+          notional: order.estimated_cost,
+        },
+      };
     } catch (error) {
       log("PolicyBroker", "buy_option_failed", { contract: contractSymbol, error: String(error) });
-      return false;
+      return { submitted: false, reason: "broker_error", metadata: { error: String(error) } };
     }
   }
 
-  async function sell(symbol: string, reason: string): Promise<boolean> {
+  async function sell(symbol: string, reason: string): Promise<BrokerSellResult> {
     if (!symbol || symbol.trim().length === 0) {
       log("PolicyBroker", "sell_blocked", { reason: "Empty symbol" });
-      return false;
+      return { submitted: false, reason: "empty_symbol" };
     }
 
     if (!reason || reason.trim().length === 0) {
       log("PolicyBroker", "sell_blocked", { symbol, reason: "No sell reason provided" });
-      return false;
+      return { submitted: false, reason: "missing_reason" };
     }
 
     // For sells (closing positions), we skip full PolicyEngine evaluation.
@@ -842,7 +863,14 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
               extended_hours: true,
               limit_price: limitPrice,
             });
-            return true;
+            return {
+              submitted: true,
+              metadata: {
+                order_id: existingAfterHoursExit.id,
+                order_status: existingAfterHoursExit.status,
+                order_type: existingAfterHoursExit.order_type ?? existingAfterHoursExit.type,
+              },
+            };
           }
 
           if (existingAfterHoursExit) {
@@ -888,7 +916,14 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
             extendedHours: true,
             limitPrice,
           });
-          return true;
+          return {
+            submitted: true,
+            metadata: {
+              order_id: order.id,
+              order_status: order.status,
+              order_type: order.order_type ?? order.type,
+            },
+          };
         }
       }
 
@@ -915,10 +950,17 @@ export function createPolicyBroker(deps: PolicyBrokerDeps): StrategyContext["bro
         filledQty: parseOptionalOrderNumber(order.filled_qty),
         filledAvgPrice: parseOptionalOrderNumber(order.filled_avg_price),
       });
-      return true;
+      return {
+        submitted: true,
+        metadata: {
+          order_id: order.id,
+          order_status: order.status,
+          order_type: order.order_type ?? order.type ?? "market",
+        },
+      };
     } catch (error) {
       log("PolicyBroker", "sell_failed", { symbol, error: String(error) });
-      return false;
+      return { submitted: false, reason: "broker_error", metadata: { error: String(error) } };
     }
   }
 

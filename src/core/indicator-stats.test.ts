@@ -126,6 +126,22 @@ describe("buildIndicatorReport", () => {
     expect(confIc?.sufficient_sample).toBe(true);
   });
 
+  it("calibrates self-reported confidence separately from choice probability", () => {
+    const samples = Array.from({ length: 40 }, (_, i) =>
+      sample({
+        decision_id: `j${i}`,
+        confidence: i / 40,
+        features: { analyst_confidence: 1 - i / 40, action_probability: i / 40 },
+        t1_return: i / 100,
+      })
+    );
+    const report = buildIndicatorReport(samples, { days: 90 });
+    const confidenceIc = report.ic.find((r) => r.feature === "confidence" && r.horizon === "t1_return");
+    const probabilityIc = report.ic.find((r) => r.feature === "action_probability" && r.horizon === "t1_return");
+    expect(confidenceIc?.ic).toBeLessThan(-0.99);
+    expect(probabilityIc?.ic).toBeGreaterThan(0.99);
+  });
+
   it("groups blocked/filtered decisions by gate_reason", () => {
     const samples = [
       sample({ decision_id: "g1", status: "blocked", t1_return: 0.03, features: { gate_reason: "max_positions" } }),
@@ -146,6 +162,46 @@ describe("buildIndicatorReport", () => {
     expect(maxPos?.win_rate_t1).toBe(1);
     const belowConf = report.gates.find((g) => g.gate === "below_min_confidence");
     expect(belowConf?.mean_t1).toBeCloseTo(-0.02);
+  });
+
+  it("reports raw forward moves for WAIT and SKIP without direction-adjusting them", () => {
+    const report = buildIndicatorReport(
+      [
+        sample({ decision_id: "w1", action: "WAIT", t1_return: 0.02, t5_return: 0.03 }),
+        sample({ decision_id: "w2", action: "WAIT", t1_return: -0.01, t5_return: null }),
+        sample({ decision_id: "s1", action: "SKIP", t1_return: -0.04, t5_return: -0.08 }),
+      ],
+      { days: 30 }
+    );
+
+    expect(report.by_action).toEqual([
+      {
+        action: "SKIP",
+        n: 1,
+        t1_n: 1,
+        mean_t1: -0.04,
+        win_rate_t1: 0,
+        t5_n: 1,
+        mean_t5: -0.08,
+        win_rate_t5: 0,
+        t20_n: 0,
+        mean_t20: null,
+        win_rate_t20: null,
+      },
+      {
+        action: "WAIT",
+        n: 2,
+        t1_n: 2,
+        mean_t1: 0.005,
+        win_rate_t1: 0.5,
+        t5_n: 1,
+        mean_t5: 0.03,
+        win_rate_t5: 1,
+        t20_n: 0,
+        mean_t20: null,
+        win_rate_t20: null,
+      },
+    ]);
   });
 
   it("builds per-source stats and calibration per engine", () => {

@@ -155,7 +155,9 @@ export interface PremarketPlan {
   recommendations: Array<{
     action: "BUY" | "SELL" | "HOLD";
     symbol: string;
+    /** Model-reported confidence; Jev action_probability is recorded separately. */
     confidence: number;
+    action_probability?: number;
     reasoning: string;
     suggested_size_pct?: number;
   }>;

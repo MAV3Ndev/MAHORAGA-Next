@@ -75,6 +75,10 @@ describe("formatDecisionMemoryBlock", () => {
     gate_lessons: [
       { gate: "insufficient_evidence", action: "BUY", n: 13, mean_t1: -0.074, mean_t5: null, win_rate_t1: 0 },
     ],
+    action_lessons: [
+      { action: "BUY", n: 9, mean_t1: -0.01, mean_t5: 0.02, win_rate_t1: 0.44 },
+      { action: "SKIP", n: 20, mean_t1: 0.03, mean_t5: 0.05, win_rate_t1: 0.65 },
+    ],
     feature_lessons: [{ feature: "mom_24h", horizon: "t1_return", ic: 0.45, n: 40 }],
   };
 
@@ -86,6 +90,7 @@ describe("formatDecisionMemoryBlock", () => {
     expect(block).toContain("GOOGL: 12 evals");
     expect(block).toContain("mom_24h: IC +0.45");
     expect(block).toContain("insufficient_evidence BUY: n=13");
+    expect(block).toContain("SKIP: n=20");
   });
 
   it("renders a usable block even when empty", () => {
@@ -96,6 +101,7 @@ describe("formatDecisionMemoryBlock", () => {
       symbols: {},
       gate_lessons: [],
       feature_lessons: [],
+      action_lessons: [],
     };
     const block = formatDecisionMemoryBlock(empty);
     expect(block).toContain("LEARNED CONTEXT");

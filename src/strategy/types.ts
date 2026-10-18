@@ -56,10 +56,10 @@ export interface StrategyContext {
     getClock(): Promise<MarketClock>;
     /** Execute a buy and return the submission or rejection details. */
     buy(symbol: string, notional: number, reason: string): Promise<BrokerBuyResult>;
-    /** Execute a long options buy. Returns true if the order was submitted. */
-    buyOption(contractSymbol: string, quantity: number, reason: string): Promise<boolean>;
-    /** Close a position. Returns true if the close was submitted. */
-    sell(symbol: string, reason: string): Promise<boolean>;
+    /** Execute a long options buy and return submission or rejection details. */
+    buyOption(contractSymbol: string, quantity: number, reason: string): Promise<BrokerBuyResult>;
+    /** Close a position and return the submitted broker order ID. */
+    sell(symbol: string, reason: string): Promise<BrokerSellResult>;
     /** Ensure broker-native protection exists for open equity positions. */
     syncProtectiveStops(positions: Position[]): Promise<void>;
   };
@@ -179,6 +179,12 @@ export interface StrategyEntryValidationResult {
 }
 
 export interface BrokerBuyResult {
+  submitted: boolean;
+  reason?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface BrokerSellResult {
   submitted: boolean;
   reason?: string;
   metadata?: Record<string, unknown>;

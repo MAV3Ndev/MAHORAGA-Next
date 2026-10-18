@@ -165,8 +165,8 @@ function createContext() {
         next_close: new Date().toISOString(),
       }),
       buy: async () => ({ submitted: true }),
-      buyOption: async () => true,
-      sell: async () => true,
+      buyOption: async () => ({ submitted: true }),
+      sell: async () => ({ submitted: true }),
       syncProtectiveStops: async () => {},
     },
     state: {

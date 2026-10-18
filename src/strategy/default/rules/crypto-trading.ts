@@ -381,8 +381,8 @@ export async function runCryptoTrading(ctx: StrategyContext, positions: Position
         pnl: plPct.toFixed(2),
         reason,
       });
-      const submitted = await ctx.broker.sell(pos.symbol, reason);
-      if (submitted) {
+      const result = await ctx.broker.sell(pos.symbol, reason);
+      if (result.submitted) {
         recordCryptoExit(ctx, pos.symbol, plPct, now);
         clearCryptoTrailingState(ctx, pos.symbol);
       }
