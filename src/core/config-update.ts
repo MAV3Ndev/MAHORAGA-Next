@@ -1,4 +1,5 @@
 import type { AgentConfig } from "../schemas/agent-config";
+import { stripBlankSecrets } from "./secret-config";
 
 export type AgentConfigUpdate = Partial<Omit<AgentConfig, "llm_provider">> & {
   llm_provider?: AgentConfig["llm_provider"];
@@ -9,16 +10,21 @@ export interface BuildAgentConfigUpdateCandidateParams {
   update: AgentConfigUpdate;
   envOpenaiBaseUrl?: string;
   envAnthropicBaseUrl?: string;
+  /** Secret keys the caller explicitly wants blanked. */
+  clearSecrets?: readonly string[];
 }
 
 function hasOwnKey<T extends object>(value: T, key: PropertyKey): boolean {
   return Object.hasOwn(value, key);
 }
 
-export function normalizeAgentConfigUpdate(update: AgentConfigUpdate): Partial<AgentConfig> {
+export function normalizeAgentConfigUpdate(
+  update: AgentConfigUpdate,
+  clearSecrets: readonly string[] = []
+): Partial<AgentConfig> {
   const normalized: Record<string, unknown> = {};
 
-  for (const [key, value] of Object.entries(update)) {
+  for (const [key, value] of Object.entries(stripBlankSecrets(update as Record<string, unknown>, clearSecrets))) {
     if (value !== undefined) {
       normalized[key] = value;
     }
@@ -32,11 +38,11 @@ export function normalizeAgentConfigUpdate(update: AgentConfigUpdate): Partial<A
     normalized.anthropic_base_url = update.anthropic_base_url.trim();
   }
 
-  if (typeof update.llm_api_key === "string") {
+  if (typeof update.llm_api_key === "string" && "llm_api_key" in normalized) {
     normalized.llm_api_key = update.llm_api_key.trim();
   }
 
-  if (typeof update.typesafe_api_key === "string") {
+  if (typeof update.typesafe_api_key === "string" && "typesafe_api_key" in normalized) {
     normalized.typesafe_api_key = update.typesafe_api_key.trim();
   }
 
@@ -56,8 +62,9 @@ export function buildAgentConfigUpdateCandidate({
   update,
   envOpenaiBaseUrl,
   envAnthropicBaseUrl,
+  clearSecrets,
 }: BuildAgentConfigUpdateCandidateParams): AgentConfig {
-  const normalizedUpdate = normalizeAgentConfigUpdate(update);
+  const normalizedUpdate = normalizeAgentConfigUpdate(update, clearSecrets);
   const merged = { ...currentConfig, ...normalizedUpdate };
   const updatedLlmModel = typeof update.llm_model === "string" ? update.llm_model.trim() : null;
   const analystModelExplicitlySet = hasOwnKey(update, "llm_analyst_model");

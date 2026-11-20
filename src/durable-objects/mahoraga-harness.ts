@@ -51,6 +51,7 @@ import {
   updateSocialHistoryFromSnapshot,
 } from "../core/social-snapshot";
 import { buildAgentStatusPayload } from "../core/status-payload";
+import { maskAgentConfig } from "../core/secret-config";
 import type {
   AgentState,
   LogEntry,
@@ -288,12 +289,22 @@ export class MahoragaHarness extends DurableObject<Env> {
   private getDashboardConfig(): AgentConfig {
     const provider = (this.state.config.llm_provider || "openai-raw") as AgentConfig["llm_provider"];
 
-    return {
+    const withDerived: AgentConfig = {
       ...this.state.config,
       llm_provider: provider,
       openai_base_url: this.state.config.openai_base_url?.trim() || this.env.OPENAI_BASE_URL || "",
       anthropic_base_url: this.state.config.anthropic_base_url?.trim() || this.env.ANTHROPIC_BASE_URL || "",
     };
+
+    // Credentials never leave the agent: /status and /config responses are
+    // readable by any client holding the API token (dashboard, Sentinel app).
+    // Blanking is safe because a blank secret on write means "unchanged".
+    return maskAgentConfig(withDerived as unknown as Record<string, unknown>).config as unknown as AgentConfig;
+  }
+
+  /** Which credentials are populated, so a UI can show "set" without the value. */
+  private getSecretFieldsSet(): Record<string, boolean> {
+    return maskAgentConfig(this.state.config as unknown as Record<string, unknown>).secretFieldsSet;
   }
 
   private getEtDayString(epochMs: number): string {
@@ -2708,7 +2719,11 @@ export class MahoragaHarness extends DurableObject<Env> {
           return this.jsonResponse({ ok: true, data: { configured: true } });
         case "config":
           if (request.method === "POST") return this.handleUpdateConfig(request);
-          return this.jsonResponse({ ok: true, data: this.state.config });
+          return this.jsonResponse({
+            ok: true,
+            data: this.getDashboardConfig(),
+            secret_fields_set: this.getSecretFieldsSet(),
+          });
         case "enable":
           return this.handleEnable();
         case "disable":
@@ -2790,12 +2805,19 @@ export class MahoragaHarness extends DurableObject<Env> {
   }
 
   private async handleUpdateConfig(request: Request): Promise<Response> {
-    const body = (await request.json()) as AgentConfigUpdate;
+    const rawBody = (await request.json()) as AgentConfigUpdate & { clear_secrets?: unknown };
+    const clearSecrets = Array.isArray(rawBody.clear_secrets)
+      ? rawBody.clear_secrets.filter((key): key is string => typeof key === "string")
+      : [];
+    const body = { ...rawBody };
+    delete (body as { clear_secrets?: unknown }).clear_secrets;
+
     const merged = buildAgentConfigUpdateCandidate({
       currentConfig: this.state.config,
       update: body,
       envOpenaiBaseUrl: this.env.OPENAI_BASE_URL,
       envAnthropicBaseUrl: this.env.ANTHROPIC_BASE_URL,
+      clearSecrets,
     });
 
     const validation = this.validateAgentConfigCandidate(merged);
@@ -2819,7 +2841,7 @@ export class MahoragaHarness extends DurableObject<Env> {
     });
   }
 
-  private collectTestAccounts(body: unknown, envCookies?: string): Array<{ cookies: string; label?: string }> {
+  private collectTestAccounts(body: unknown, envCookies?: string, storedCookies?: string): Array<{ cookies: string; label?: string }> {
     const payload = (body ?? {}) as {
       accounts?: Array<{ cookies?: string; label?: string }>;
       prefer_env?: boolean;
@@ -2835,11 +2857,21 @@ export class MahoragaHarness extends DurableObject<Env> {
     if (accounts.length === 0 && payload.prefer_env !== false && envValue) {
       accounts.push({ cookies: envValue, label: "env" });
     }
+    // The dashboard now receives masked (blank) cookies, so a "test connection"
+    // click would otherwise lose the stored account. Fall back to it.
+    const storedValue = storedCookies?.trim();
+    if (accounts.length === 0 && storedValue) {
+      accounts.push({ cookies: storedValue, label: "stored" });
+    }
     return accounts;
   }
 
   private async handleTwitterCookieTest(request: Request): Promise<Response> {
-    const accounts = this.collectTestAccounts(await request.json().catch(() => ({})), this.env.TWITTER_COOKIES);
+    const accounts = this.collectTestAccounts(
+      await request.json().catch(() => ({})),
+      this.env.TWITTER_COOKIES,
+      this.state.config.twitter_cookies
+    );
     if (accounts.length === 0) {
       return this.jsonErrorResponse("No Twitter/X cookie accounts configured", { account_count: 0, passed: 0 });
     }
@@ -2868,7 +2900,7 @@ export class MahoragaHarness extends DurableObject<Env> {
 
   private async handleRedditCookieTest(request: Request): Promise<Response> {
     const body = (await request.json().catch(() => ({}))) as { user_agent?: string };
-    const accounts = this.collectTestAccounts(body, this.env.REDDIT_COOKIES);
+    const accounts = this.collectTestAccounts(body, this.env.REDDIT_COOKIES, this.state.config.reddit_cookies);
     if (accounts.length === 0) {
       return this.jsonErrorResponse("No Reddit cookie accounts configured", { account_count: 0, passed: 0 });
     }
